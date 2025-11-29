@@ -43,13 +43,13 @@ GraphMem is a state-of-the-art, self-evolving graph-based memory system designed
 ### Installation
 
 ```bash
-pip install graphmem
+pip install agentic-graph-mem
 ```
 
 Or with all dependencies:
 
 ```bash
-pip install graphmem[all]
+pip install agentic-graph-mem[all]
 ```
 
 ### Basic Usage
