@@ -1,0 +1,128 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "graphmem"
+version = "1.0.0"
+description = "Production-Grade Agent Memory Framework for Agentic AI"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.9"
+authors = [
+    { name = "Ameer AI", email = "ameer@ameerai.com" }
+]
+keywords = [
+    "ai",
+    "agent",
+    "memory",
+    "knowledge-graph",
+    "rag",
+    "graphrag",
+    "llm",
+    "embedding",
+    "neo4j",
+    "agentic-ai",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+dependencies = [
+    "numpy>=1.21.0",
+    "pydantic>=2.0.0",
+    "networkx>=3.0",
+]
+
+[project.optional-dependencies]
+# LLM providers
+openai = ["openai>=1.0.0"]
+anthropic = ["anthropic>=0.25.0"]
+llm = ["openai>=1.0.0", "anthropic>=0.25.0"]
+
+# Storage backends
+neo4j = ["neo4j>=5.0.0"]
+redis = ["redis>=4.0.0"]
+storage = ["neo4j>=5.0.0", "redis>=4.0.0"]
+
+# Document processing
+pdf = ["PyMuPDF>=1.23.0"]
+ocr = ["pytesseract>=0.3.10", "Pillow>=9.0.0"]
+audio = ["openai-whisper>=20231117"]
+web = ["beautifulsoup4>=4.12.0", "requests>=2.31.0"]
+docs = [
+    "PyMuPDF>=1.23.0",
+    "pytesseract>=0.3.10",
+    "Pillow>=9.0.0",
+    "openai-whisper>=20231117",
+    "beautifulsoup4>=4.12.0",
+    "requests>=2.31.0",
+]
+
+# Local embeddings
+local = ["sentence-transformers>=2.2.0"]
+
+# Development
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "pytest-asyncio>=0.21.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+    "mypy>=1.0.0",
+]
+
+# All dependencies
+all = [
+    "openai>=1.0.0",
+    "anthropic>=0.25.0",
+    "neo4j>=5.0.0",
+    "redis>=4.0.0",
+    "PyMuPDF>=1.23.0",
+    "pytesseract>=0.3.10",
+    "Pillow>=9.0.0",
+    "beautifulsoup4>=4.12.0",
+    "requests>=2.31.0",
+    "sentence-transformers>=2.2.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/ameerai/graphmem"
+Documentation = "https://graphmem.readthedocs.io"
+Repository = "https://github.com/ameerai/graphmem"
+Issues = "https://github.com/ameerai/graphmem/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["graphmem"]
+
+[tool.black]
+line-length = 100
+target-version = ["py39", "py310", "py311", "py312"]
+
+[tool.ruff]
+line-length = 100
+select = ["E", "F", "I", "W"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "-v --tb=short"
+
