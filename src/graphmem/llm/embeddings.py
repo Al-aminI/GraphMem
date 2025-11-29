@@ -210,3 +210,40 @@ class EmbeddingProvider:
             return 0.0
         
         return float(np.dot(a, b) / (norm_a * norm_b))
+
+
+def get_embedding_provider(
+    provider: str = "openai",
+    api_key: Optional[str] = None,
+    api_base: Optional[str] = None,
+    api_version: Optional[str] = None,
+    model: Optional[str] = None,
+    deployment: Optional[str] = None,
+    cache=None,
+    **kwargs,
+) -> EmbeddingProvider:
+    """
+    Factory function to create an embedding provider.
+    
+    Args:
+        provider: Provider name (azure_openai, openai, local)
+        api_key: API key
+        api_base: API base URL
+        api_version: API version (Azure)
+        model: Model name
+        deployment: Deployment name (Azure)
+        cache: Optional cache for embeddings
+    
+    Returns:
+        Configured EmbeddingProvider instance
+    """
+    return EmbeddingProvider(
+        provider=provider,
+        api_key=api_key,
+        api_base=api_base,
+        api_version=api_version,
+        model=model,
+        deployment=deployment,
+        cache=cache,
+        **kwargs,
+    )

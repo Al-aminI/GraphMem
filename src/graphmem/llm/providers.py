@@ -287,3 +287,37 @@ class LLMProvider(BaseLLM):
             return self._anthropic_chat(messages, 0.1, 4000)
         else:
             raise ValueError(f"Vision not supported for provider: {self.provider}")
+
+
+def get_llm_provider(
+    provider: str = "openai",
+    api_key: Optional[str] = None,
+    api_base: Optional[str] = None,
+    api_version: Optional[str] = None,
+    model: Optional[str] = None,
+    deployment: Optional[str] = None,
+    **kwargs,
+) -> LLMProvider:
+    """
+    Factory function to create an LLM provider.
+    
+    Args:
+        provider: Provider name (azure_openai, openai, anthropic, ollama)
+        api_key: API key
+        api_base: API base URL
+        api_version: API version (Azure)
+        model: Model name
+        deployment: Deployment name (Azure)
+    
+    Returns:
+        Configured LLMProvider instance
+    """
+    return LLMProvider(
+        provider=provider,
+        api_key=api_key,
+        api_base=api_base,
+        api_version=api_version,
+        model=model,
+        deployment=deployment,
+        **kwargs,
+    )

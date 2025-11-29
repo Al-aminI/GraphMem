@@ -256,6 +256,20 @@ class GraphMem:
         
         logger.info(f"GraphMem instance created (memory_id={self.memory_id})")
     
+    @property
+    def memory(self) -> Memory:
+        """Access the underlying Memory object."""
+        if self._memory is None:
+            from uuid import uuid4
+            self._memory = Memory(
+                id=self.memory_id or str(uuid4()),
+                name="GraphMem Memory",
+                description="Auto-generated memory instance",
+                created_at=datetime.utcnow(),
+            )
+            self.memory_id = self._memory.id
+        return self._memory
+    
     def _ensure_initialized(self) -> None:
         """Lazy initialization of components."""
         if self._initialized:
