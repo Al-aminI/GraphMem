@@ -111,6 +111,11 @@ class EntityResolver:
                 merged = self._merge_entities(canonical, node)
                 self._entity_index[key] = merged
                 
+                # Use best embedding (prefer non-None, then node's)
+                best_embedding = merged.embedding
+                if best_embedding is None and node.embedding is not None:
+                    best_embedding = np.array(node.embedding) if isinstance(node.embedding, list) else node.embedding
+                
                 # Update the node with canonical info
                 resolved_node = MemoryNode(
                     id=key,  # Use canonical key as ID
@@ -119,6 +124,7 @@ class EntityResolver:
                     description=self._best_description(merged.descriptions),
                     canonical_name=merged.name,
                     aliases=merged.aliases,
+                    embedding=list(best_embedding) if best_embedding is not None else None,  # Preserve embedding!
                     properties={
                         **node.properties,
                         "canonical_name": merged.name,
@@ -145,6 +151,7 @@ class EntityResolver:
                     description=node.description,
                     canonical_name=node.name,
                     aliases={node.name},
+                    embedding=node.embedding,  # Preserve embedding!
                     properties={
                         **node.properties,
                         "canonical_name": node.name,

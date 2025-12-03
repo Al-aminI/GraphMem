@@ -385,13 +385,14 @@ class GraphMem:
             token_limit=self.config.max_context_length,
         )
         
-        # Initialize retriever
+        # Initialize retriever (with Neo4j vector search if available)
         self._retriever = MemoryRetriever(
             embeddings=self._embeddings,
             store=self._graph_store,
             cache=self._cache,
             top_k=self.config.similarity_top_k,
             min_similarity=self.config.min_similarity_threshold,
+            memory_id=self.memory_id,  # For Neo4j vector search
         )
         
         # Initialize query engine
@@ -422,8 +423,10 @@ class GraphMem:
     def _create_new_memory(self) -> None:
         """Create a new memory instance."""
         from uuid import uuid4
+        # Use provided memory_id or generate a new one
+        memory_id = self.memory_id or str(uuid4())
         self._memory = Memory(
-            id=str(uuid4()),
+            id=memory_id,
             name="GraphMem Memory",
             description="Auto-generated memory instance",
             created_at=datetime.utcnow(),

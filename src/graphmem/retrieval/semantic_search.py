@@ -2,15 +2,18 @@
 GraphMem Semantic Search
 
 High-performance semantic search over memory nodes.
-Uses embeddings for similarity matching.
+Supports both in-memory search and Neo4j vector index for scalability.
 """
 
 from __future__ import annotations
 import logging
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional, Tuple, TYPE_CHECKING
 import numpy as np
 
 from graphmem.core.memory_types import MemoryNode, MemoryEdge
+
+if TYPE_CHECKING:
+    from graphmem.stores.neo4j_store import Neo4jStore
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +24,9 @@ class SemanticSearch:
     
     Features:
     - Embedding-based similarity search
+    - Neo4j vector index support for large-scale search
     - Hybrid search (semantic + keyword)
+    - Evolution-aware ranking (importance, recency, access count)
     - Filtered search with metadata
     - Caching for performance
     """
@@ -32,6 +37,8 @@ class SemanticSearch:
         cache=None,
         top_k: int = 10,
         min_similarity: float = 0.5,
+        neo4j_store: Optional["Neo4jStore"] = None,
+        memory_id: Optional[str] = None,
     ):
         """
         Initialize semantic search.
@@ -41,15 +48,30 @@ class SemanticSearch:
             cache: Optional cache for embeddings
             top_k: Default number of results
             min_similarity: Minimum similarity threshold
+            neo4j_store: Optional Neo4j store for vector index search
+            memory_id: Memory ID for Neo4j vector search
         """
         self.embeddings = embeddings
         self.cache = cache
         self.top_k = top_k
         self.min_similarity = min_similarity
+        self.neo4j_store = neo4j_store
+        self.memory_id = memory_id
         
-        # In-memory index for fast search
+        # In-memory index for fast search (fallback when Neo4j not available)
         self._index: Dict[str, np.ndarray] = {}
         self._node_lookup: Dict[str, MemoryNode] = {}
+        
+        # Track if Neo4j vector search is available
+        self._use_neo4j_vector = False
+        if neo4j_store and memory_id:
+            try:
+                self._use_neo4j_vector = neo4j_store.use_vector_index
+                if self._use_neo4j_vector:
+                    neo4j_store.ensure_vector_index(memory_id)
+                    logger.info("Neo4j vector index enabled for semantic search")
+            except Exception as e:
+                logger.warning(f"Neo4j vector index not available: {e}")
     
     def index_nodes(self, nodes: List[MemoryNode]) -> None:
         """
@@ -81,6 +103,8 @@ class SemanticSearch:
         """
         Search for similar nodes.
         
+        Uses Neo4j vector index if available, otherwise falls back to in-memory search.
+        
         Args:
             query: Search query
             top_k: Number of results
@@ -90,9 +114,6 @@ class SemanticSearch:
         Returns:
             List of (node, similarity_score) tuples
         """
-        if not self._index:
-            return []
-        
         top_k = top_k or self.top_k
         min_similarity = min_similarity or self.min_similarity
         
@@ -104,6 +125,30 @@ class SemanticSearch:
             query_vector = np.array(query_embedding)
         except Exception as e:
             logger.error(f"Failed to embed query: {e}")
+            return []
+        
+        # Use Neo4j vector search if available (faster for large datasets)
+        if self._use_neo4j_vector and self.neo4j_store and self.memory_id:
+            try:
+                results = self.neo4j_store.vector_search(
+                    memory_id=self.memory_id,
+                    query_embedding=list(query_embedding),
+                    top_k=top_k,
+                    min_score=min_similarity,
+                )
+                
+                # Apply filters
+                if filters:
+                    results = [(n, s) for n, s in results if self._matches_filters(n, filters)]
+                
+                logger.debug(f"Neo4j vector search returned {len(results)} results")
+                return results
+                
+            except Exception as e:
+                logger.warning(f"Neo4j vector search failed, falling back to in-memory: {e}")
+        
+        # Fallback: In-memory search
+        if not self._index:
             return []
         
         # Calculate similarities with importance weighting
@@ -152,6 +197,37 @@ class SemanticSearch:
         # Sort by combined score (similarity + importance + recency + access) and limit
         results.sort(key=lambda x: x[1], reverse=True)
         return results[:top_k]
+    
+    def enable_neo4j_vector(self, neo4j_store: "Neo4jStore", memory_id: str) -> bool:
+        """
+        Enable Neo4j vector search.
+        
+        Args:
+            neo4j_store: Neo4j store instance
+            memory_id: Memory ID
+            
+        Returns:
+            True if Neo4j vector search was enabled
+        """
+        self.neo4j_store = neo4j_store
+        self.memory_id = memory_id
+        
+        try:
+            if neo4j_store.use_vector_index:
+                neo4j_store.ensure_vector_index(memory_id)
+                self._use_neo4j_vector = neo4j_store.has_vector_support()
+                if self._use_neo4j_vector:
+                    logger.info("Neo4j vector search enabled")
+                return self._use_neo4j_vector
+        except Exception as e:
+            logger.warning(f"Could not enable Neo4j vector search: {e}")
+        
+        return False
+    
+    @property
+    def using_neo4j_vector(self) -> bool:
+        """Check if Neo4j vector search is being used."""
+        return self._use_neo4j_vector
     
     def find_similar_entities(
         self,

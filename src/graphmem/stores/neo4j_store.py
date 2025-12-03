@@ -2,7 +2,8 @@
 GraphMem Neo4j Store
 
 Production-grade Neo4j backend for persistent graph storage.
-Includes retry logic, connection pooling, and optimized queries.
+Includes retry logic, connection pooling, optimized queries,
+and native vector index support for fast semantic search.
 """
 
 from __future__ import annotations
@@ -10,13 +11,20 @@ import os
 import json
 import logging
 import time
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime
 
-from graphmem.core.memory_types import Memory, MemoryNode, MemoryEdge, MemoryCluster
+from graphmem.core.memory_types import Memory, MemoryNode, MemoryEdge, MemoryCluster, MemoryImportance
 from graphmem.core.exceptions import StorageError
 
 logger = logging.getLogger(__name__)
+
+# Default embedding dimensions for common models
+EMBEDDING_DIMENSIONS = {
+    "text-embedding-3-small": 1536,
+    "text-embedding-3-large": 3072,
+    "text-embedding-ada-002": 1536,
+}
 
 
 class Neo4jStore:
@@ -38,6 +46,8 @@ class Neo4jStore:
         database: str = "neo4j",
         max_retries: int = 3,
         retry_delay: float = 5.0,
+        embedding_dimensions: int = 1536,
+        use_vector_index: bool = True,
     ):
         """
         Initialize Neo4j store.
@@ -49,6 +59,8 @@ class Neo4jStore:
             database: Database name
             max_retries: Maximum retry attempts
             retry_delay: Delay between retries in seconds
+            embedding_dimensions: Dimension of embedding vectors (default 1536 for OpenAI)
+            use_vector_index: Whether to use Neo4j vector index for fast similarity search
         """
         self.uri = uri
         self.username = username
@@ -56,7 +68,10 @@ class Neo4jStore:
         self.database = database
         self.max_retries = max_retries
         self.retry_delay = retry_delay
+        self.embedding_dimensions = embedding_dimensions
+        self.use_vector_index = use_vector_index
         self._driver = None
+        self._vector_index_created = False
     
     @property
     def driver(self):
@@ -146,7 +161,7 @@ class Neo4jStore:
         logger.info(f"Saved memory {memory.id}: {len(memory.nodes)} nodes, {len(memory.edges)} edges")
     
     def _save_nodes_batch(self, memory_id: str, nodes: List[MemoryNode], batch_size: int = 500) -> None:
-        """Save nodes in batches."""
+        """Save nodes in batches, including embeddings for vector search."""
         if not nodes:
             return
         
@@ -167,6 +182,7 @@ class Neo4jStore:
                     "created_at": n.created_at.isoformat(),
                     "updated_at": n.updated_at.isoformat(),
                     "accessed_at": n.accessed_at.isoformat(),
+                    "embedding": n.embedding,  # Include embedding for vector search
                 }
                 for n in batch
             ]
@@ -186,11 +202,16 @@ class Neo4jStore:
                     n.access_count = node.access_count,
                     n.created_at = node.created_at,
                     n.updated_at = node.updated_at,
-                    n.accessed_at = node.accessed_at
+                    n.accessed_at = node.accessed_at,
+                    n.embedding = node.embedding
                 """,
                 {"memory_id": memory_id, "nodes": node_data},
                 write=True,
             )
+        
+        # Ensure vector index exists after saving nodes with embeddings
+        if self.use_vector_index:
+            self.ensure_vector_index(memory_id)
     
     def _save_edges_batch(self, memory_id: str, edges: List[MemoryEdge], batch_size: int = 500) -> None:
         """Save edges in batches."""
@@ -310,7 +331,7 @@ class Neo4jStore:
         return memory
     
     def _load_nodes(self, memory_id: str) -> List[MemoryNode]:
-        """Load nodes for a memory."""
+        """Load nodes for a memory, including embeddings."""
         result = self._execute_query(
             """
             MATCH (n:Entity {memory_id: $memory_id})
@@ -337,6 +358,7 @@ class Neo4jStore:
                 canonical_name=n.get("canonical_name"),
                 aliases=set(n.get("aliases", [])),
                 properties=props,
+                embedding=n.get("embedding"),  # Load embedding for vector search
                 importance=MemoryImportance(n.get("importance", 5)),
                 state=MemoryState[n.get("state", "ACTIVE")],
                 access_count=n.get("access_count", 0),
@@ -439,4 +461,331 @@ class Neo4jStore:
         if self._driver:
             self._driver.close()
             self._driver = None
+    
+    # ==================== Vector Index Support ====================
+    
+    def ensure_vector_index(self, memory_id: str = None) -> bool:
+        """
+        Create global vector index for fast similarity search if not exists.
+        
+        Neo4j 5.x+ required for native vector indexes.
+        Returns True if index was created/exists, False if not supported.
+        
+        Note: Uses a single global index for all Entity nodes.
+        """
+        if not self.use_vector_index:
+            return False
+        
+        if self._vector_index_created:
+            return True
+        
+        # Use a single global index name (not per-memory)
+        index_name = "graphmem_entity_vector_idx"
+        
+        try:
+            # Check Neo4j version - vector indexes require 5.x+
+            version_result = self._execute_query("CALL dbms.components() YIELD versions RETURN versions[0] AS version")
+            if version_result:
+                version = version_result[0].get("version", "0")
+                major_version = int(version.split(".")[0])
+                if major_version < 5:
+                    logger.warning(f"Neo4j {version} does not support vector indexes. Need 5.x+")
+                    self.use_vector_index = False
+                    return False
+            
+            # Check if index already exists
+            existing = self._execute_query(
+                "SHOW INDEXES WHERE name = $name",
+                {"name": index_name}
+            )
+            
+            if existing:
+                logger.info(f"Vector index {index_name} already exists")
+                self._vector_index_created = True
+                return True
+            
+            # Create vector index
+            # Note: This uses Cypher syntax for Neo4j 5.x
+            self._execute_query(
+                f"""
+                CREATE VECTOR INDEX {index_name} IF NOT EXISTS
+                FOR (n:Entity)
+                ON (n.embedding)
+                OPTIONS {{
+                    indexConfig: {{
+                        `vector.dimensions`: {self.embedding_dimensions},
+                        `vector.similarity_function`: 'cosine'
+                    }}
+                }}
+                """,
+                write=True,
+            )
+            
+            logger.info(f"Created vector index {index_name} with {self.embedding_dimensions} dimensions")
+            self._vector_index_created = True
+            return True
+            
+        except Exception as e:
+            logger.warning(f"Could not create vector index: {e}. Falling back to in-memory search.")
+            self.use_vector_index = False
+            return False
+    
+    def save_embedding(self, memory_id: str, node_id: str, embedding: List[float]) -> None:
+        """Save embedding vector for a node."""
+        self._execute_query(
+            """
+            MATCH (n:Entity {id: $node_id, memory_id: $memory_id})
+            SET n.embedding = $embedding
+            """,
+            {
+                "memory_id": memory_id,
+                "node_id": node_id,
+                "embedding": embedding,
+            },
+            write=True,
+        )
+    
+    def save_embeddings_batch(
+        self, 
+        memory_id: str, 
+        embeddings: Dict[str, List[float]], 
+        batch_size: int = 100
+    ) -> None:
+        """
+        Save multiple embeddings in batches.
+        
+        Args:
+            memory_id: Memory ID
+            embeddings: Dict mapping node_id -> embedding vector
+            batch_size: Number of embeddings per batch
+        """
+        items = list(embeddings.items())
+        
+        for i in range(0, len(items), batch_size):
+            batch = items[i:i + batch_size]
+            batch_data = [{"node_id": nid, "embedding": emb} for nid, emb in batch]
+            
+            self._execute_query(
+                """
+                UNWIND $batch AS item
+                MATCH (n:Entity {id: item.node_id, memory_id: $memory_id})
+                SET n.embedding = item.embedding
+                """,
+                {"memory_id": memory_id, "batch": batch_data},
+                write=True,
+            )
+        
+        logger.info(f"Saved {len(embeddings)} embeddings for memory {memory_id}")
+    
+    def vector_search(
+        self,
+        memory_id: str,
+        query_embedding: List[float],
+        top_k: int = 10,
+        min_score: float = 0.5,
+    ) -> List[Tuple[MemoryNode, float]]:
+        """
+        Perform vector similarity search using Neo4j vector index.
+        
+        Args:
+            memory_id: Memory ID to search in
+            query_embedding: Query embedding vector
+            top_k: Number of results to return
+            min_score: Minimum similarity score (0-1)
+            
+        Returns:
+            List of (MemoryNode, similarity_score) tuples
+        """
+        if not self.use_vector_index:
+            return self._vector_search_fallback(memory_id, query_embedding, top_k, min_score)
+        
+        # Ensure index exists
+        self.ensure_vector_index()
+        
+        if not self._vector_index_created:
+            return self._vector_search_fallback(memory_id, query_embedding, top_k, min_score)
+        
+        # Use global index name
+        index_name = "graphmem_entity_vector_idx"
+        
+        try:
+            # Use Neo4j vector search
+            results = self._execute_query(
+                f"""
+                CALL db.index.vector.queryNodes('{index_name}', $top_k, $embedding)
+                YIELD node, score
+                WHERE node.memory_id = $memory_id AND score >= $min_score
+                RETURN node, score
+                ORDER BY score DESC
+                """,
+                {
+                    "embedding": query_embedding,
+                    "top_k": top_k * 2,  # Fetch more to filter by memory_id
+                    "memory_id": memory_id,
+                    "min_score": min_score,
+                },
+            )
+            
+            nodes_with_scores = []
+            for record in results[:top_k]:
+                n = record["node"]
+                score = record["score"]
+                
+                try:
+                    props = json.loads(n.get("properties", "{}"))
+                except:
+                    props = {}
+                
+                # Apply evolution weighting to score
+                importance_value = n.get("importance", 5)
+                importance_weight = importance_value / 10.0
+                
+                # Calculate recency boost
+                recency_boost = 0.0
+                accessed_at_str = n.get("accessed_at")
+                if accessed_at_str:
+                    try:
+                        accessed_at = datetime.fromisoformat(accessed_at_str)
+                        hours_since = (datetime.utcnow() - accessed_at).total_seconds() / 3600
+                        if hours_since < 24:
+                            recency_boost = 0.1 * (1 - hours_since / 24)
+                    except:
+                        pass
+                
+                # Access count boost
+                access_count = n.get("access_count", 0)
+                access_boost = min(0.1, access_count * 0.01)
+                
+                # Combined score (same formula as semantic_search.py)
+                combined_score = (
+                    0.60 * score + 
+                    0.25 * importance_weight + 
+                    recency_boost + 
+                    access_boost
+                )
+                
+                node = MemoryNode(
+                    id=n["id"],
+                    name=n["name"],
+                    entity_type=n.get("entity_type", "Entity"),
+                    description=n.get("description"),
+                    canonical_name=n.get("canonical_name"),
+                    aliases=set(n.get("aliases", [])),
+                    properties=props,
+                    importance=MemoryImportance(importance_value),
+                    access_count=access_count,
+                    memory_id=memory_id,
+                )
+                
+                # Skip EPHEMERAL (fully decayed) nodes
+                if node.importance.value == 0:
+                    continue
+                
+                nodes_with_scores.append((node, combined_score))
+            
+            # Re-sort by combined score
+            nodes_with_scores.sort(key=lambda x: x[1], reverse=True)
+            
+            logger.debug(f"Vector search returned {len(nodes_with_scores)} results")
+            return nodes_with_scores[:top_k]
+            
+        except Exception as e:
+            logger.warning(f"Vector search failed: {e}. Using fallback.")
+            return self._vector_search_fallback(memory_id, query_embedding, top_k, min_score)
+    
+    def _vector_search_fallback(
+        self,
+        memory_id: str,
+        query_embedding: List[float],
+        top_k: int = 10,
+        min_score: float = 0.5,
+    ) -> List[Tuple[MemoryNode, float]]:
+        """
+        Fallback brute-force vector search when vector index not available.
+        """
+        # Load all nodes with embeddings
+        results = self._execute_query(
+            """
+            MATCH (n:Entity {memory_id: $memory_id})
+            WHERE n.embedding IS NOT NULL
+            RETURN n
+            """,
+            {"memory_id": memory_id},
+        )
+        
+        import math
+        
+        def cosine_similarity(a: List[float], b: List[float]) -> float:
+            dot = sum(x * y for x, y in zip(a, b))
+            norm_a = math.sqrt(sum(x * x for x in a))
+            norm_b = math.sqrt(sum(x * x for x in b))
+            if norm_a == 0 or norm_b == 0:
+                return 0.0
+            return dot / (norm_a * norm_b)
+        
+        nodes_with_scores = []
+        for record in results:
+            n = record["n"]
+            embedding = n.get("embedding")
+            if not embedding:
+                continue
+            
+            similarity = cosine_similarity(query_embedding, embedding)
+            if similarity < min_score:
+                continue
+            
+            try:
+                props = json.loads(n.get("properties", "{}"))
+            except:
+                props = {}
+            
+            importance_value = n.get("importance", 5)
+            
+            # Skip EPHEMERAL nodes
+            if importance_value == 0:
+                continue
+            
+            importance_weight = importance_value / 10.0
+            access_count = n.get("access_count", 0)
+            access_boost = min(0.1, access_count * 0.01)
+            
+            # Recency boost
+            recency_boost = 0.0
+            accessed_at_str = n.get("accessed_at")
+            if accessed_at_str:
+                try:
+                    accessed_at = datetime.fromisoformat(accessed_at_str)
+                    hours_since = (datetime.utcnow() - accessed_at).total_seconds() / 3600
+                    if hours_since < 24:
+                        recency_boost = 0.1 * (1 - hours_since / 24)
+                except:
+                    pass
+            
+            combined_score = (
+                0.60 * similarity + 
+                0.25 * importance_weight + 
+                recency_boost + 
+                access_boost
+            )
+            
+            node = MemoryNode(
+                id=n["id"],
+                name=n["name"],
+                entity_type=n.get("entity_type", "Entity"),
+                description=n.get("description"),
+                canonical_name=n.get("canonical_name"),
+                aliases=set(n.get("aliases", [])),
+                properties=props,
+                importance=MemoryImportance(importance_value),
+                access_count=access_count,
+                memory_id=memory_id,
+            )
+            nodes_with_scores.append((node, combined_score))
+        
+        nodes_with_scores.sort(key=lambda x: x[1], reverse=True)
+        return nodes_with_scores[:top_k]
+    
+    def has_vector_support(self) -> bool:
+        """Check if Neo4j vector index is available and enabled."""
+        return self.use_vector_index and self._vector_index_created
 

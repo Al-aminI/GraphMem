@@ -7,7 +7,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![GitHub](https://img.shields.io/badge/github-Al--aminI/GraphMem-blue.svg)](https://github.com/Al-aminI/GraphMem)
 
-GraphMem is a state-of-the-art, self-evolving graph-based memory system for production AI agents. It achieves **99% token reduction**, **4.2× faster queries**, and **bounded memory growth** compared to naive RAG approaches.
+GraphMem is a state-of-the-art, self-evolving graph-based memory system for production AI agents. It achieves **Significant token reduction**, **a lot faster queries**, and **bounded memory growth** compared to naive RAG approaches in production scale.
 
 ## 📊 Benchmark Results
 

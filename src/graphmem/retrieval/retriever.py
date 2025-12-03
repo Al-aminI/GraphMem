@@ -40,28 +40,38 @@ class MemoryRetriever:
         cache=None,
         top_k: int = 10,
         min_similarity: float = 0.5,
+        memory_id: Optional[str] = None,
     ):
         """
         Initialize retriever.
         
         Args:
             embeddings: Embedding provider
-            store: Graph store
+            store: Graph store (Neo4jStore for vector search, or InMemoryStore)
             cache: Optional cache
             top_k: Default number of results
             min_similarity: Minimum similarity threshold
+            memory_id: Memory ID (used for Neo4j vector search)
         """
         self.embeddings = embeddings
         self.store = store
         self.cache = cache
         self.top_k = top_k
         self.min_similarity = min_similarity
+        self.memory_id = memory_id
+        
+        # Check if store is Neo4j for vector search
+        neo4j_store = None
+        if hasattr(store, 'vector_search') and hasattr(store, 'use_vector_index'):
+            neo4j_store = store
         
         self.semantic_search = SemanticSearch(
             embeddings=embeddings,
             cache=cache,
             top_k=top_k,
             min_similarity=min_similarity,
+            neo4j_store=neo4j_store,
+            memory_id=memory_id,
         )
     
     def retrieve(

@@ -240,14 +240,23 @@ class KnowledgeGraph:
             response = self.llm.complete(prompt)
             entities, relationships = self._parse_extraction_response(response)
             
-            # Create nodes
+            # Create nodes with embeddings for vector search
             nodes = []
             for name, entity_type, description in entities:
+                # Generate embedding for the node (name + description)
+                text_to_embed = f"{name}: {description}" if description else name
+                try:
+                    embedding = self.embeddings.embed_text(text_to_embed)
+                except Exception as e:
+                    logger.warning(f"Failed to generate embedding for {name}: {e}")
+                    embedding = None
+                
                 node = MemoryNode(
                     id="",  # Will be generated
                     name=name,
                     entity_type=entity_type,
                     description=description,
+                    embedding=embedding,  # Add embedding for vector search
                     properties={**metadata, "source_chunk": chunk[:200]},
                     memory_id=memory_id,
                 )
@@ -321,13 +330,20 @@ List relationships as: RELATIONSHIP: source -> relation -> target | description"
                                 desc.strip(),
                             ))
             
-            nodes = [
-                MemoryNode(
+            nodes = []
+            for name, etype, desc in entities:
+                # Generate embedding for vector search
+                text_to_embed = f"{name}: {desc}" if desc else name
+                try:
+                    embedding = self.embeddings.embed_text(text_to_embed)
+                except:
+                    embedding = None
+                    
+                nodes.append(MemoryNode(
                     id="", name=name, entity_type=etype,
-                    description=desc, properties=metadata, memory_id=memory_id,
-                )
-                for name, etype, desc in entities
-            ]
+                    description=desc, embedding=embedding,
+                    properties=metadata, memory_id=memory_id,
+                ))
             
             edges = [
                 MemoryEdge(
