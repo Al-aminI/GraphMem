@@ -138,11 +138,14 @@ class CommunityDetector:
             coherence = self._calculate_coherence(G, community)
             density = self._calculate_density(G, community)
             
-            # Determine importance from nodes
-            importance = max(
-                (n.importance for n in community_nodes),
-                default=MemoryImportance.MEDIUM,
-            )
+            # Determine importance from nodes (use .value for comparison)
+            if community_nodes:
+                importance = max(
+                    community_nodes,
+                    key=lambda n: n.importance.value,
+                ).importance
+            else:
+                importance = MemoryImportance.MEDIUM
             
             cluster = MemoryCluster(
                 id=i,

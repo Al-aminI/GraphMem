@@ -97,6 +97,7 @@ class MemoryConfig:
     llm_provider: str = field(default_factory=lambda: os.getenv("GRAPHMEM_LLM_PROVIDER", "openai"))
     llm_model: str = field(default_factory=lambda: os.getenv("GRAPHMEM_LLM_MODEL", "gpt-4o-mini"))
     llm_api_key: Optional[str] = field(default_factory=lambda: os.getenv("GRAPHMEM_LLM_API_KEY") or os.getenv("OPENAI_API_KEY"))
+    llm_api_base: Optional[str] = field(default_factory=lambda: os.getenv("GRAPHMEM_LLM_API_BASE"))  # For OpenRouter, Groq, etc.
     llm_temperature: float = 0.1
     llm_max_tokens: int = 8000
     
@@ -104,6 +105,7 @@ class MemoryConfig:
     embedding_provider: str = field(default_factory=lambda: os.getenv("GRAPHMEM_EMBEDDING_PROVIDER", "openai"))
     embedding_model: str = field(default_factory=lambda: os.getenv("GRAPHMEM_EMBEDDING_MODEL", "text-embedding-3-small"))
     embedding_api_key: Optional[str] = field(default_factory=lambda: os.getenv("GRAPHMEM_EMBEDDING_API_KEY") or os.getenv("OPENAI_API_KEY"))
+    embedding_api_base: Optional[str] = field(default_factory=lambda: os.getenv("GRAPHMEM_EMBEDDING_API_BASE"))  # For OpenRouter, etc.
     embedding_dimensions: int = 1536
     
     # Extraction Configuration
@@ -309,8 +311,7 @@ class GraphMem:
             provider=self.config.llm_provider,
             model=self.config.llm_model,
             api_key=self.config.llm_api_key,
-            temperature=self.config.llm_temperature,
-            max_tokens=self.config.llm_max_tokens,
+            api_base=self.config.llm_api_base,
         )
         
         # Initialize embeddings
@@ -318,7 +319,7 @@ class GraphMem:
             provider=self.config.embedding_provider,
             model=self.config.embedding_model,
             api_key=self.config.embedding_api_key,
-            dimensions=self.config.embedding_dimensions,
+            api_base=self.config.embedding_api_base,
         )
         
         # Initialize storage
@@ -365,8 +366,7 @@ class GraphMem:
         self._context_engine = ContextEngine(
             llm=self._llm,
             embeddings=self._embeddings,
-            max_context_length=self.config.max_context_length,
-            enable_multimodal=self.config.enable_multimodal,
+            token_limit=self.config.max_context_length,
         )
         
         # Initialize retriever

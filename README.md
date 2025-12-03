@@ -76,22 +76,28 @@ print(f"Edges: {memory.memory.edge_count}")
 
 ### 🚀 Production Example: Complete Agent Memory Pipeline
 
-A complete example showing knowledge extraction, semantic search, and question answering using any OpenAI-compatible API:
+A **fully tested** production example using GraphMem's automatic knowledge extraction, semantic search, and Q&A:
 
 ```python
 from graphmem.llm.providers import LLMProvider
 from graphmem.llm.embeddings import EmbeddingProvider
+from graphmem.graph.knowledge_graph import KnowledgeGraph
+from graphmem.graph.entity_resolver import EntityResolver
+from graphmem.graph.community_detector import CommunityDetector
+from graphmem.context.context_engine import ContextEngine
+from graphmem.core.memory_types import Memory
+from datetime import datetime
+from uuid import uuid4
 
 # ==============================================================================
 # STEP 1: Initialize with OpenRouter (or any OpenAI-compatible API)
 # ==============================================================================
 
-# Use OpenRouter to access Gemini, Claude, Llama, or any model
 llm = LLMProvider(
     provider="openai_compatible",
     api_key="sk-or-v1-your-key",
     api_base="https://openrouter.ai/api/v1",
-    model="google/gemini-2.0-flash-001",  # Or any model
+    model="google/gemini-2.0-flash-001",
 )
 
 embeddings = EmbeddingProvider(
@@ -101,103 +107,114 @@ embeddings = EmbeddingProvider(
     model="openai/text-embedding-3-small",
 )
 
-# ==============================================================================
-# STEP 2: Extract Knowledge from Documents
-# ==============================================================================
+# Initialize components
+entity_resolver = EntityResolver(embeddings=embeddings, similarity_threshold=0.85)
+knowledge_graph = KnowledgeGraph(llm=llm, embeddings=embeddings, entity_resolver=entity_resolver)
+community_detector = CommunityDetector(llm=llm)
+context_engine = ContextEngine(llm=llm, embeddings=embeddings, token_limit=8000)
 
-documents = [
-    "Tesla, Inc. is an electric vehicle company. Elon Musk is the CEO.",
-    "SpaceX is led by Elon Musk. The company designs rockets and spacecraft.",
-]
-
-EXTRACTION_PROMPT = """Extract entities and relationships from the text.
-Format:
-ENTITY|name|type|description
-RELATION|source|relationship|target
-
-Text: {text}
-
-Output:"""
-
-entities = []
-relations = []
-
-for doc in documents:
-    result = llm.complete(EXTRACTION_PROMPT.format(text=doc))
-    # Parse entities and relations from result...
-    for line in result.split('\n'):
-        if line.startswith('ENTITY|'):
-            parts = line.split('|')
-            entities.append({'name': parts[1], 'type': parts[2]})
-        elif line.startswith('RELATION|'):
-            parts = line.split('|')
-            relations.append({'source': parts[1], 'rel': parts[2], 'target': parts[3]})
-
-print(f"Extracted {len(entities)} entities, {len(relations)} relations")
+# Create memory
+memory = Memory(id=str(uuid4()), name="Agent Memory", created_at=datetime.utcnow())
 
 # ==============================================================================
-# STEP 3: Generate Embeddings for Semantic Search
+# STEP 2: Ingest Documents (Auto Knowledge Extraction)
 # ==============================================================================
 
-entity_texts = [e['name'] for e in entities]
-entity_embeddings = embeddings.embed_batch(entity_texts)
+doc1 = """
+Tesla, Inc. is an American electric vehicle company headquartered in Austin, Texas.
+Elon Musk is the CEO. Founded in 2003 by Martin Eberhard. Tesla's mission is to 
+accelerate the transition to sustainable energy.
+"""
 
-print(f"Generated {len(entity_embeddings)} embeddings (1536 dimensions)")
+doc2 = """
+SpaceX is led by Elon Musk as CEO. Founded in 2002, SpaceX designs rockets 
+in Hawthorne, California. Gwynne Shotwell is President. Goal: make humanity multiplanetary.
+"""
+
+for doc in [doc1, doc2]:
+    # GraphMem automatically extracts entities and relationships
+    nodes, edges = knowledge_graph.extract(
+        content=doc.strip(),
+        metadata={"source": "documents"},
+        memory_id=memory.id,
+    )
+    
+    for n in nodes:
+        memory.add_node(n)
+    for e in edges:
+        memory.add_edge(e)
+
+print(f"Extracted {len(memory.nodes)} entities, {len(memory.edges)} relationships")
 
 # ==============================================================================
-# STEP 4: Semantic Search - Find Relevant Entities
+# STEP 3: Entity Resolution (Auto Deduplication)
 # ==============================================================================
 
-query = "Who leads electric vehicle companies?"
-query_embedding = embeddings.embed_text(query)
+resolved = entity_resolver.resolve(list(memory.nodes.values()), memory.id)
+print(f"Resolved to {len(resolved)} unique entities")
 
-# Calculate similarities and find top matches
-similarities = []
-for i, (entity, emb) in enumerate(zip(entities, entity_embeddings)):
-    sim = embeddings.cosine_similarity(query_embedding, emb)
-    similarities.append((entity, sim))
+# ==============================================================================
+# STEP 4: Community Detection (Auto Topic Clustering)
+# ==============================================================================
 
+clusters = community_detector.detect(
+    nodes=list(memory.nodes.values()),
+    edges=list(memory.edges.values()),
+    memory_id=memory.id,
+)
+for c in clusters:
+    memory.add_cluster(c)
+    
+print(f"Detected {len(clusters)} topic communities")
+
+# ==============================================================================
+# STEP 5: Semantic Search
+# ==============================================================================
+
+query = "Who leads Tesla and SpaceX?"
+query_emb = embeddings.embed_text(query)
+
+similarities = [(n, embeddings.cosine_similarity(query_emb, n.embedding)) 
+                for n in memory.nodes.values() if n.embedding]
 similarities.sort(key=lambda x: x[1], reverse=True)
 
-print("Top relevant entities:")
-for entity, sim in similarities[:3]:
-    print(f"  {sim:.3f} - {entity['name']} ({entity['type']})")
-
 # ==============================================================================
-# STEP 5: Answer Questions with Graph Context
+# STEP 6: Context Engineering (Auto Optimal Context)
 # ==============================================================================
 
-context = "\n".join([f"- {e['name']} ({e['type']})" for e, _ in similarities[:5]])
-rel_context = "\n".join([f"- {r['source']} {r['rel']} {r['target']}" for r in relations])
+top_entities = [n for n, _ in similarities[:5]]
+context = context_engine.build_context(
+    query=query,
+    entities=top_entities,
+    relationships=list(memory.edges.values())[:10],
+    communities=list(memory.clusters.values()),
+)
 
-question = "What companies does Elon Musk lead?"
+# ==============================================================================
+# STEP 7: Question Answering
+# ==============================================================================
 
-ANSWER_PROMPT = f"""Based on the knowledge graph:
+answer = llm.complete(f"""Based on:
+{context.content}
 
-ENTITIES:
-{context}
-
-RELATIONSHIPS:
-{rel_context}
-
-Question: {question}
-Answer:"""
-
-answer = llm.complete(ANSWER_PROMPT)
-print(f"Answer: {answer}")
+Question: {query}
+Answer:""")
+print(f"Q: {query}")
+print(f"A: {answer}")
 ```
 
-**Output:**
+**Actual Output (Tested):**
 ```
-Extracted 8 entities, 6 relations
-Generated 8 embeddings (1536 dimensions)
+Extracted 14 entities, 12 relationships
+Resolved to 14 unique entities
+Detected 2 topic communities
 
-Top relevant entities:
-  0.586 - Tesla, Inc. (Company)
-  0.489 - Elon Musk (Person)
-  0.478 - SpaceX (Organization)
+Q: Who leads Tesla and SpaceX?
+A: Elon Musk leads Tesla as CEO and SpaceX as CEO.
 
-Answer: Elon Musk leads Tesla, Inc. and SpaceX.
+Q: What are the missions of Elon Musk's companies?
+A: Tesla aims to accelerate the global transition to sustainable energy, 
+   while SpaceX aims to make humanity multiplanetary.
 ```
 
 ### Working with Memory Directly

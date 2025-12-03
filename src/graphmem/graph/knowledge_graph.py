@@ -76,8 +76,8 @@ class KnowledgeGraph:
         self,
         llm,
         embeddings,
-        store,
-        entity_resolver,
+        store=None,  # Optional - can work in-memory
+        entity_resolver=None,
         chunk_size: int = 2048,
         chunk_overlap: int = 200,
         max_triplets_per_chunk: int = 40,
