@@ -39,6 +39,7 @@ class SemanticSearch:
         min_similarity: float = 0.5,
         neo4j_store: Optional["Neo4jStore"] = None,
         memory_id: Optional[str] = None,
+        user_id: str = "default",
     ):
         """
         Initialize semantic search.
@@ -50,6 +51,7 @@ class SemanticSearch:
             min_similarity: Minimum similarity threshold
             neo4j_store: Optional Neo4j store for vector index search
             memory_id: Memory ID for Neo4j vector search
+            user_id: User ID for multi-tenant isolation
         """
         self.embeddings = embeddings
         self.cache = cache
@@ -57,6 +59,7 @@ class SemanticSearch:
         self.min_similarity = min_similarity
         self.neo4j_store = neo4j_store
         self.memory_id = memory_id
+        self.user_id = user_id  # Multi-tenant isolation
         
         # In-memory index for fast search (fallback when Neo4j not available)
         self._index: Dict[str, np.ndarray] = {}
@@ -128,6 +131,7 @@ class SemanticSearch:
             return []
         
         # Use Neo4j vector search if available (faster for large datasets)
+        # Includes multi-tenant isolation via user_id
         if self._use_neo4j_vector and self.neo4j_store and self.memory_id:
             try:
                 results = self.neo4j_store.vector_search(
@@ -135,6 +139,7 @@ class SemanticSearch:
                     query_embedding=list(query_embedding),
                     top_k=top_k,
                     min_score=min_similarity,
+                    user_id=self.user_id,  # Multi-tenant isolation
                 )
                 
                 # Apply filters

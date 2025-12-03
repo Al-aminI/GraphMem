@@ -112,6 +112,7 @@ class KnowledgeGraph:
         content: str,
         metadata: Dict[str, Any],
         memory_id: str,
+        user_id: str = "default",
         progress_callback: Optional[Callable[[str, float], None]] = None,
     ) -> Tuple[List[MemoryNode], List[MemoryEdge]]:
         """
@@ -121,6 +122,7 @@ class KnowledgeGraph:
             content: Text content to process
             metadata: Metadata to attach to extracted elements
             memory_id: ID of parent memory
+            user_id: User ID for multi-tenant isolation
             progress_callback: Optional progress callback
         
         Returns:
@@ -143,7 +145,7 @@ class KnowledgeGraph:
         if len(chunks) == 1:
             # Single chunk - process directly
             entities, relationships = self._extract_from_chunk(
-                chunks[0], metadata, memory_id
+                chunks[0], metadata, memory_id, user_id
             )
             all_entities.extend(entities)
             all_relationships.extend(relationships)
@@ -153,7 +155,7 @@ class KnowledgeGraph:
             with ThreadPoolExecutor(max_workers=self.config.max_workers) as executor:
                 futures = {
                     executor.submit(
-                        self._extract_from_chunk, chunk, metadata, memory_id
+                        self._extract_from_chunk, chunk, metadata, memory_id, user_id
                     ): i
                     for i, chunk in enumerate(chunks)
                 }
@@ -176,8 +178,8 @@ class KnowledgeGraph:
         if progress_callback:
             progress_callback("resolving", 0.5)
         
-        # Resolve entity duplicates
-        nodes = self.entity_resolver.resolve(all_entities, memory_id)
+        # Resolve entity duplicates (pass user_id for multi-tenant isolation)
+        nodes = self.entity_resolver.resolve(all_entities, memory_id, user_id)
         
         # Update edges with canonical names
         edges = self._resolve_edge_entities(all_relationships, nodes)
@@ -229,6 +231,7 @@ class KnowledgeGraph:
         chunk: str,
         metadata: Dict[str, Any],
         memory_id: str,
+        user_id: str = "default",
     ) -> Tuple[List[MemoryNode], List[MemoryEdge]]:
         """Extract entities and relationships from a single chunk."""
         prompt = EXTRACTION_PROMPT.format(
@@ -258,6 +261,7 @@ class KnowledgeGraph:
                     description=description,
                     embedding=embedding,  # Add embedding for vector search
                     properties={**metadata, "source_chunk": chunk[:200]},
+                    user_id=user_id,     # Multi-tenant isolation
                     memory_id=memory_id,
                 )
                 nodes.append(node)
@@ -282,7 +286,7 @@ class KnowledgeGraph:
             logger.error(f"Extraction failed for chunk: {e}")
             if self.config.retry_on_failure:
                 # Retry with simpler prompt
-                return self._extract_fallback(chunk, metadata, memory_id)
+                return self._extract_fallback(chunk, metadata, memory_id, user_id)
             return [], []
     
     def _extract_fallback(
@@ -290,6 +294,7 @@ class KnowledgeGraph:
         chunk: str,
         metadata: Dict[str, Any],
         memory_id: str,
+        user_id: str = "default",
     ) -> Tuple[List[MemoryNode], List[MemoryEdge]]:
         """Fallback extraction with simpler prompt."""
         try:
@@ -342,7 +347,9 @@ List relationships as: RELATIONSHIP: source -> relation -> target | description"
                 nodes.append(MemoryNode(
                     id="", name=name, entity_type=etype,
                     description=desc, embedding=embedding,
-                    properties=metadata, memory_id=memory_id,
+                    properties=metadata, 
+                    user_id=user_id,     # Multi-tenant isolation
+                    memory_id=memory_id,
                 ))
             
             edges = [

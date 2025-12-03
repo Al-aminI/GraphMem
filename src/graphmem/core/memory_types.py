@@ -74,6 +74,10 @@ class MemoryNode:
     
     Nodes are immutable after creation to ensure graph integrity.
     Use MemoryNode.evolve() to create updated versions.
+    
+    Multi-Tenant Isolation:
+        - user_id: Identifies the user/tenant (required for isolation)
+        - memory_id: Identifies the specific memory session within a user
     """
     id: str
     name: str
@@ -89,7 +93,8 @@ class MemoryNode:
     updated_at: datetime = field(default_factory=datetime.utcnow)
     accessed_at: datetime = field(default_factory=datetime.utcnow)
     access_count: int = 0
-    memory_id: Optional[str] = None  # Parent memory reference
+    user_id: Optional[str] = None     # User/tenant isolation
+    memory_id: Optional[str] = None   # Memory session reference
     
     def __post_init__(self):
         if not self.id:

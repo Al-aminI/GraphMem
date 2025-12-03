@@ -87,6 +87,7 @@ class EntityResolver:
         self,
         nodes: List[MemoryNode],
         memory_id: str,
+        user_id: str = "default",
     ) -> List[MemoryNode]:
         """
         Resolve duplicate entities in a list of nodes.
@@ -94,6 +95,7 @@ class EntityResolver:
         Args:
             nodes: List of nodes to resolve
             memory_id: ID of parent memory
+            user_id: User ID for multi-tenant isolation
         
         Returns:
             List of deduplicated nodes with canonical names
@@ -131,6 +133,7 @@ class EntityResolver:
                         "aliases": list(merged.aliases),
                         "occurrence_count": merged.occurrences,
                     },
+                    user_id=user_id,  # Multi-tenant isolation
                     memory_id=memory_id,
                 )
                 
@@ -156,6 +159,7 @@ class EntityResolver:
                         **node.properties,
                         "canonical_name": node.name,
                     },
+                    user_id=user_id,  # Multi-tenant isolation
                     memory_id=memory_id,
                 )
                 resolved_nodes.append(resolved_node)

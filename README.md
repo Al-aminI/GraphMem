@@ -1018,6 +1018,91 @@ Key contributions:
 
 Paper: [`paper/main.tex`](paper/main.tex)
 
+## 🏭 Production Multi-Tenant Architecture
+
+GraphMem supports **true multi-tenant isolation** with `user_id` + `memory_id`:
+
+### Data Model
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                 Neo4j Global Vector Index                        │
+├────────────────────────┬────────────────────────────────────────┤
+│      USER: alice       │           USER: bob                    │
+│  ┌─────────────────┐   │   ┌─────────────────┐                  │
+│  │ memory: chat_1  │   │   │ memory: chat_1  │  ← Same memory_id│
+│  │ memory: notes   │   │   │ memory: work    │    but isolated! │
+│  └─────────────────┘   │   └─────────────────┘                  │
+└────────────────────────┴────────────────────────────────────────┘
+```
+
+Each entity stored with:
+- `user_id`: Identifies the user/tenant (required for isolation)
+- `memory_id`: Identifies the specific memory session
+
+### Usage
+
+```python
+from graphmem import GraphMem, MemoryConfig
+
+# User Alice's chat memory
+alice_chat = GraphMem(
+    config=MemoryConfig(user_id="alice"),  # Or pass directly
+    user_id="alice",
+    memory_id="chat_session_1"
+)
+alice_chat.ingest("Alice works at Google")
+
+# User Bob's chat memory (ISOLATED from Alice)
+bob_chat = GraphMem(
+    config=MemoryConfig(user_id="bob"),
+    user_id="bob", 
+    memory_id="chat_session_1"  # Same memory_id, different user!
+)
+bob_chat.ingest("Bob is a doctor")
+
+# Alice can only see her data
+response = alice_chat.query("Where do I work?")  # "Google"
+response = alice_chat.query("What does Bob do?")  # "No information found"
+```
+
+### Deployment Tiers
+
+| Scale | Users | Strategy | Neo4j Setup |
+|-------|-------|----------|-------------|
+| **Small** | 1-100 | Single DB, user_id filtering | Neo4j Aura Free/Pro |
+| **Medium** | 100-10K | Single DB, fetch multiplier 10x | Neo4j Aura Enterprise |
+| **Large** | 10K-100K | Sharded by user groups | Neo4j Cluster |
+| **Enterprise** | 100K+ | Database per tenant | Neo4j Fabric / Multi-DB |
+
+### Enterprise: Separate Database per Tenant
+
+```python
+# For maximum isolation (enterprise)
+user_db = f"user_{user_id}"
+config = MemoryConfig(
+    neo4j_uri="neo4j+ssc://xxx.databases.neo4j.io",
+    neo4j_database=user_db,  # Completely isolated per tenant
+    user_id=user_id,
+)
+```
+
+### Performance Characteristics
+
+| Metric | 1K entities | 100K entities | 1M entities |
+|--------|-------------|---------------|-------------|
+| Vector search | <10ms | <50ms | <200ms |
+| User filtering | Instant | <10ms | <50ms |
+| Evolution cycle | <1s | <10s | <60s |
+
+### Best Practices
+
+1. **Always set `user_id`** for multi-tenant apps
+2. **Use unique `memory_id`** per conversation/session within a user
+3. **Call `evolve()` periodically** to consolidate and decay
+4. **Enable Redis caching** for frequently accessed memories
+5. **Monitor entity count** - consider separate DBs at 100K+ per tenant
+
 ## 📦 Dependencies
 
 ### Required

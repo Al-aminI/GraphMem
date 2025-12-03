@@ -82,7 +82,15 @@ class MemoryConfig:
     
     All settings have sensible defaults for production use.
     Override as needed for your specific deployment.
+    
+    Multi-Tenant Notes:
+        - Set `user_id` to isolate data per user/tenant
+        - Each user can have multiple memory sessions via `memory_id`
+        - Data is filtered by BOTH user_id AND memory_id
     """
+    
+    # Multi-tenant isolation (IMPORTANT for production!)
+    user_id: Optional[str] = field(default_factory=lambda: os.getenv("GRAPHMEM_USER_ID"))
     
     # Storage backends (None = use in-memory storage)
     neo4j_uri: Optional[str] = field(default_factory=lambda: os.getenv("GRAPHMEM_NEO4J_URI", None))
@@ -206,6 +214,7 @@ class GraphMem:
         self,
         config: Optional[MemoryConfig] = None,
         memory_id: Optional[str] = None,
+        user_id: Optional[str] = None,
         auto_evolve: bool = False,
     ):
         """
@@ -213,11 +222,24 @@ class GraphMem:
         
         Args:
             config: Configuration options. Uses defaults if not provided.
-            memory_id: Optional ID for this memory instance. Auto-generated if not provided.
+            memory_id: Optional ID for this memory session. Auto-generated if not provided.
+            user_id: Optional user/tenant ID for multi-tenant isolation.
+                     If not provided, uses config.user_id or falls back to "default".
             auto_evolve: If True, memory evolves automatically on access.
+        
+        Multi-Tenant Usage:
+            # User A's memory
+            gm_alice = GraphMem(config, user_id="alice", memory_id="chat_1")
+            
+            # User B's memory (isolated from Alice)
+            gm_bob = GraphMem(config, user_id="bob", memory_id="chat_1")  # Same memory_id, different user
         """
         self.config = config or MemoryConfig()
         self.memory_id = memory_id
+        
+        # Multi-tenant isolation: user_id separates different users' data
+        self.user_id = user_id or self.config.user_id or "default"
+        
         self.auto_evolve = auto_evolve
         
         self._initialized = False
@@ -393,6 +415,7 @@ class GraphMem:
             top_k=self.config.similarity_top_k,
             min_similarity=self.config.min_similarity_threshold,
             memory_id=self.memory_id,  # For Neo4j vector search
+            user_id=self.user_id,  # Multi-tenant isolation
         )
         
         # Initialize query engine
@@ -435,12 +458,12 @@ class GraphMem:
         logger.info(f"Created new memory: {self.memory_id}")
     
     def _load_memory(self) -> None:
-        """Load existing memory from storage."""
+        """Load existing memory from storage (filtered by user_id for multi-tenant isolation)."""
         try:
-            loaded = self._graph_store.load_memory(self.memory_id)
+            loaded = self._graph_store.load_memory(self.memory_id, self.user_id)
             if loaded:
                 self._memory = loaded
-                logger.info(f"Loaded memory: {self.memory_id}")
+                logger.info(f"Loaded memory: {self.memory_id} for user: {self.user_id}")
             else:
                 self._create_new_memory()
         except Exception as e:
@@ -491,6 +514,7 @@ class GraphMem:
                 content=content,
                 metadata=metadata or {},
                 memory_id=self.memory_id,
+                user_id=self.user_id,  # Multi-tenant isolation
                 progress_callback=progress_callback,
             )
             

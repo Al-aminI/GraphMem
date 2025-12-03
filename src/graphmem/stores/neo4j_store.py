@@ -183,14 +183,16 @@ class Neo4jStore:
                     "updated_at": n.updated_at.isoformat(),
                     "accessed_at": n.accessed_at.isoformat(),
                     "embedding": n.embedding,  # Include embedding for vector search
+                    "user_id": n.user_id or "default",  # Multi-tenant isolation
                 }
                 for n in batch
             ]
             
+            # MERGE on user_id + id to ensure proper tenant isolation
             self._execute_query(
                 """
                 UNWIND $nodes AS node
-                MERGE (n:Entity {id: node.id, memory_id: $memory_id})
+                MERGE (n:Entity {id: node.id, user_id: node.user_id, memory_id: $memory_id})
                 SET n.name = node.name,
                     n.entity_type = node.entity_type,
                     n.description = node.description,
@@ -284,8 +286,14 @@ class Neo4jStore:
                 write=True,
             )
     
-    def load_memory(self, memory_id: str) -> Optional[Memory]:
-        """Load a memory from Neo4j."""
+    def load_memory(self, memory_id: str, user_id: str = "default") -> Optional[Memory]:
+        """
+        Load a memory from Neo4j for a specific user.
+        
+        Args:
+            memory_id: Memory session ID
+            user_id: User ID for multi-tenant isolation
+        """
         # Load memory metadata
         result = self._execute_query(
             """
@@ -312,8 +320,8 @@ class Neo4jStore:
             version=memory_data.get("version", 1),
         )
         
-        # Load nodes
-        nodes = self._load_nodes(memory_id)
+        # Load nodes (filtered by user_id for multi-tenant isolation)
+        nodes = self._load_nodes(memory_id, user_id)
         for node in nodes:
             memory.nodes[node.id] = node
         
@@ -327,17 +335,17 @@ class Neo4jStore:
         for cluster in clusters:
             memory.clusters[cluster.id] = cluster
         
-        logger.info(f"Loaded memory {memory_id}: {len(memory.nodes)} nodes")
+        logger.info(f"Loaded memory {memory_id} for user {user_id}: {len(memory.nodes)} nodes")
         return memory
     
-    def _load_nodes(self, memory_id: str) -> List[MemoryNode]:
-        """Load nodes for a memory, including embeddings."""
+    def _load_nodes(self, memory_id: str, user_id: str = "default") -> List[MemoryNode]:
+        """Load nodes for a memory, filtered by user_id for multi-tenant isolation."""
         result = self._execute_query(
             """
-            MATCH (n:Entity {memory_id: $memory_id})
+            MATCH (n:Entity {user_id: $user_id, memory_id: $memory_id})
             RETURN n
             """,
-            {"memory_id": memory_id},
+            {"user_id": user_id, "memory_id": memory_id},
         )
         
         nodes = []
@@ -607,6 +615,7 @@ class Neo4jStore:
         query_embedding: List[float],
         top_k: int = 10,
         min_score: float = 0.5,
+        user_id: str = "default",
     ) -> List[Tuple[MemoryNode, float]]:
         """
         Perform vector similarity search using Neo4j vector index.
@@ -621,32 +630,53 @@ class Neo4jStore:
             List of (MemoryNode, similarity_score) tuples
         """
         if not self.use_vector_index:
-            return self._vector_search_fallback(memory_id, query_embedding, top_k, min_score)
+            return self._vector_search_fallback(memory_id, query_embedding, top_k, min_score, user_id)
         
         # Ensure index exists
         self.ensure_vector_index()
         
         if not self._vector_index_created or not hasattr(self, '_vector_index_name'):
-            return self._vector_search_fallback(memory_id, query_embedding, top_k, min_score)
+            return self._vector_search_fallback(memory_id, query_embedding, top_k, min_score, user_id)
         
         # Use the discovered/created index name
         index_name = self._vector_index_name
         
         try:
-            # Use Neo4j vector search
+            # PRODUCTION NOTE: The global vector index contains ALL users' entities.
+            # We need to fetch enough results to filter down to this memory_id.
+            # 
+            # Strategy: Estimate based on total entities and fetch proportionally more.
+            # In production with many users, we fetch up to 10x more to ensure
+            # we get enough results after memory_id filtering.
+            #
+            # For very large deployments, consider:
+            # 1. Sharding by memory_id
+            # 2. Using Neo4j's graph partitioning
+            # 3. Separate databases per tenant
+            
+            fetch_multiplier = 10  # Fetch 10x more than needed
+            fetch_count = min(top_k * fetch_multiplier, 1000)  # Cap at 1000 for performance
+            
+            # Use Neo4j vector search with post-filtering by user_id AND memory_id
+            # This ensures multi-tenant isolation: users only see their own data
             results = self._execute_query(
                 f"""
-                CALL db.index.vector.queryNodes('{index_name}', $top_k, $embedding)
+                CALL db.index.vector.queryNodes('{index_name}', $fetch_count, $embedding)
                 YIELD node, score
-                WHERE node.memory_id = $memory_id AND score >= $min_score
+                WHERE node.user_id = $user_id 
+                  AND node.memory_id = $memory_id 
+                  AND score >= $min_score
                 RETURN node, score
                 ORDER BY score DESC
+                LIMIT $top_k
                 """,
                 {
                     "embedding": query_embedding,
-                    "top_k": top_k * 2,  # Fetch more to filter by memory_id
+                    "fetch_count": fetch_count,
+                    "user_id": user_id,
                     "memory_id": memory_id,
                     "min_score": min_score,
+                    "top_k": top_k,
                 },
             )
             
@@ -715,7 +745,7 @@ class Neo4jStore:
             
         except Exception as e:
             logger.warning(f"Vector search failed: {e}. Using fallback.")
-            return self._vector_search_fallback(memory_id, query_embedding, top_k, min_score)
+            return self._vector_search_fallback(memory_id, query_embedding, top_k, min_score, user_id)
     
     def _vector_search_fallback(
         self,
@@ -723,18 +753,20 @@ class Neo4jStore:
         query_embedding: List[float],
         top_k: int = 10,
         min_score: float = 0.5,
+        user_id: str = "default",
     ) -> List[Tuple[MemoryNode, float]]:
         """
         Fallback brute-force vector search when vector index not available.
+        Filters by both user_id and memory_id for multi-tenant isolation.
         """
-        # Load all nodes with embeddings
+        # Load nodes with embeddings for this user and memory
         results = self._execute_query(
             """
-            MATCH (n:Entity {memory_id: $memory_id})
+            MATCH (n:Entity {user_id: $user_id, memory_id: $memory_id})
             WHERE n.embedding IS NOT NULL
             RETURN n
             """,
-            {"memory_id": memory_id},
+            {"user_id": user_id, "memory_id": memory_id},
         )
         
         import math

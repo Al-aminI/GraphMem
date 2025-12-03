@@ -41,6 +41,7 @@ class MemoryRetriever:
         top_k: int = 10,
         min_similarity: float = 0.5,
         memory_id: Optional[str] = None,
+        user_id: str = "default",
     ):
         """
         Initialize retriever.
@@ -52,6 +53,7 @@ class MemoryRetriever:
             top_k: Default number of results
             min_similarity: Minimum similarity threshold
             memory_id: Memory ID (used for Neo4j vector search)
+            user_id: User ID for multi-tenant isolation
         """
         self.embeddings = embeddings
         self.store = store
@@ -59,6 +61,7 @@ class MemoryRetriever:
         self.top_k = top_k
         self.min_similarity = min_similarity
         self.memory_id = memory_id
+        self.user_id = user_id
         
         # Check if store is Neo4j for vector search
         neo4j_store = None
@@ -72,6 +75,7 @@ class MemoryRetriever:
             min_similarity=min_similarity,
             neo4j_store=neo4j_store,
             memory_id=memory_id,
+            user_id=user_id,  # Multi-tenant isolation
         )
     
     def retrieve(
