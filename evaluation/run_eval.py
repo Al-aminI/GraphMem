@@ -130,6 +130,9 @@ class MultiHopRAGEvaluator:
         embedding_model: str = "openai/text-embedding-3-small",
         neo4j_uri: str = None,
         neo4j_password: str = None,
+        redis_host: str = None,
+        redis_port: int = None,
+        redis_password: str = None,
         data_dir: str = None,
     ):
         self.api_key = api_key
@@ -138,6 +141,9 @@ class MultiHopRAGEvaluator:
         self.embedding_model = embedding_model
         self.neo4j_uri = neo4j_uri
         self.neo4j_password = neo4j_password
+        self.redis_host = redis_host
+        self.redis_port = redis_port
+        self.redis_password = redis_password
         
         # Data directory
         if data_dir is None:
@@ -188,8 +194,16 @@ class MultiHopRAGEvaluator:
         return NaiveRAG(emb, llm)
     
     def _init_graphmem(self):
-        """Initialize GraphMem."""
+        """Initialize GraphMem with Neo4j + Redis caching."""
         from graphmem import GraphMem, MemoryConfig
+        
+        # Build Redis URL if credentials provided
+        redis_url = None
+        if self.redis_host and self.redis_port:
+            if self.redis_password:
+                redis_url = f"redis://default:{self.redis_password}@{self.redis_host}:{self.redis_port}"
+            else:
+                redis_url = f"redis://{self.redis_host}:{self.redis_port}"
         
         config = MemoryConfig(
             llm_provider="openai_compatible",
@@ -203,6 +217,8 @@ class MultiHopRAGEvaluator:
             neo4j_uri=self.neo4j_uri,
             neo4j_username="neo4j",
             neo4j_password=self.neo4j_password,
+            redis_url=redis_url,
+            redis_ttl=3600,  # 1 hour cache TTL
         )
         return GraphMem(config)
     
@@ -250,6 +266,8 @@ class MultiHopRAGEvaluator:
         print(f"   QA Samples: {len(self.qa_samples)} (testing {n_qa_samples})")
         print(f"   LLM: {self.llm_model}")
         print(f"   Embeddings: {self.embedding_model}")
+        print(f"   Neo4j: {'✓ ' + self.neo4j_uri if self.neo4j_uri else '✗ in-memory'}")
+        print(f"   Redis: {'✓ ' + self.redis_host if self.redis_host else '✗ no cache'}")
         print("=" * 70)
         
         # Sample corpus and QA
@@ -457,9 +475,14 @@ def main():
     LLM_MODEL = "google/gemini-2.0-flash-001"
     EMBEDDING_MODEL = "openai/text-embedding-3-small"
     
-    # Optional Neo4j (comment out to use in-memory)
+    # Neo4j Cloud
     NEO4J_URI = "neo4j+ssc://ab98af39.databases.neo4j.io"
     NEO4J_PASSWORD = "6n_x28wTO8YOcDUcSOchwtwTNI6vtE7Ns2-sJExYGfQ"
+    
+    # Redis Cloud (for caching - improves GraphMem query speed)
+    REDIS_HOST = "redis-17983.c57.us-east-1-4.ec2.cloud.redislabs.com"
+    REDIS_PORT = 17983
+    REDIS_PASSWORD = "hmBrWMJIFPsbc8flsatlTPCoaCESWidN"
     
     evaluator = MultiHopRAGEvaluator(
         api_key=API_KEY,
@@ -468,6 +491,9 @@ def main():
         embedding_model=EMBEDDING_MODEL,
         neo4j_uri=NEO4J_URI,
         neo4j_password=NEO4J_PASSWORD,
+        redis_host=REDIS_HOST,
+        redis_port=REDIS_PORT,
+        redis_password=REDIS_PASSWORD,
     )
     
     # Run evaluation with full dataset
