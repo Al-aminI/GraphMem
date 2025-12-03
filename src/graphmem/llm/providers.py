@@ -2,6 +2,16 @@
 GraphMem LLM Providers
 
 Abstraction layer for LLM interactions supporting multiple providers.
+
+Supports:
+- OpenAI
+- Azure OpenAI  
+- Anthropic Claude
+- OpenRouter (100+ models)
+- Together AI
+- Groq
+- Any OpenAI-compatible API
+- Local models (Ollama)
 """
 
 from __future__ import annotations
@@ -39,13 +49,53 @@ class BaseLLM(ABC):
 
 class LLMProvider(BaseLLM):
     """
-    Multi-provider LLM abstraction.
+    Multi-provider LLM abstraction supporting any OpenAI-compatible API.
     
-    Supports:
-    - Azure OpenAI
-    - OpenAI
-    - Anthropic Claude
-    - Local models (Ollama)
+    Supported Providers:
+    - azure_openai: Azure OpenAI Service
+    - openai: OpenAI API
+    - openai_compatible: Any OpenAI-compatible API (OpenRouter, Together, Groq, etc.)
+    - anthropic: Anthropic Claude
+    - ollama: Local Ollama models
+    
+    Examples:
+        # OpenAI
+        llm = LLMProvider(provider="openai", api_key="sk-...", model="gpt-4o")
+        
+        # Azure OpenAI
+        llm = LLMProvider(
+            provider="azure_openai",
+            api_key="...",
+            api_base="https://your-resource.openai.azure.com/",
+            deployment="gpt-4"
+        )
+        
+        # OpenRouter (100+ models)
+        llm = LLMProvider(
+            provider="openai_compatible",
+            api_key="sk-or-v1-...",
+            api_base="https://openrouter.ai/api/v1",
+            model="google/gemini-2.5-flash"
+        )
+        
+        # Together AI
+        llm = LLMProvider(
+            provider="openai_compatible",
+            api_key="...",
+            api_base="https://api.together.xyz/v1",
+            model="meta-llama/Llama-3-70b-chat-hf"
+        )
+        
+        # Groq
+        llm = LLMProvider(
+            provider="openai_compatible",
+            api_key="gsk_...",
+            api_base="https://api.groq.com/openai/v1",
+            model="llama-3.1-70b-versatile"
+        )
+        
+        # Local Ollama
+        llm = LLMProvider(provider="ollama", model="llama3.2")
     """
     
     def __init__(
@@ -62,12 +112,13 @@ class LLMProvider(BaseLLM):
         Initialize LLM provider.
         
         Args:
-            provider: Provider name (azure_openai, openai, anthropic, ollama)
+            provider: Provider name (azure_openai, openai, openai_compatible, anthropic, ollama)
             api_key: API key (or from env)
-            api_base: API base URL
-            api_version: API version (Azure)
-            model: Model name
-            deployment: Deployment name (Azure)
+            api_base: API base URL (required for openai_compatible)
+            api_version: API version (Azure only)
+            model: Model name/identifier
+            deployment: Deployment name (Azure only)
+            **kwargs: Additional provider-specific options
         """
         self.provider = provider.lower()
         self.api_key = api_key
@@ -86,12 +137,15 @@ class LLMProvider(BaseLLM):
             self._init_azure_openai()
         elif self.provider == "openai":
             self._init_openai()
+        elif self.provider == "openai_compatible":
+            self._init_openai_compatible()
         elif self.provider == "anthropic":
             self._init_anthropic()
         elif self.provider == "ollama":
             self._init_ollama()
         else:
-            raise ValueError(f"Unsupported LLM provider: {self.provider}")
+            raise ValueError(f"Unsupported LLM provider: {self.provider}. "
+                           f"Supported: azure_openai, openai, openai_compatible, anthropic, ollama")
     
     def _init_azure_openai(self):
         """Initialize Azure OpenAI client."""
@@ -115,9 +169,50 @@ class LLMProvider(BaseLLM):
             
             self._client = OpenAI(
                 api_key=self.api_key or os.getenv("OPENAI_API_KEY"),
-                base_url=self.api_base,
+                base_url=self.api_base,  # None uses default OpenAI endpoint
             )
             self.model = self.model or "gpt-4o"
+            
+        except ImportError:
+            raise ImportError("openai package required: pip install openai")
+    
+    def _init_openai_compatible(self):
+        """
+        Initialize OpenAI-compatible client for third-party providers.
+        
+        Works with:
+        - OpenRouter: https://openrouter.ai/api/v1
+        - Together AI: https://api.together.xyz/v1  
+        - Groq: https://api.groq.com/openai/v1
+        - Anyscale: https://api.endpoints.anyscale.com/v1
+        - Fireworks: https://api.fireworks.ai/inference/v1
+        - Perplexity: https://api.perplexity.ai
+        - DeepInfra: https://api.deepinfra.com/v1/openai
+        - Mistral: https://api.mistral.ai/v1
+        - And any other OpenAI-compatible endpoint
+        """
+        try:
+            from openai import OpenAI
+            
+            if not self.api_base:
+                raise ValueError(
+                    "api_base is required for openai_compatible provider. "
+                    "Example: api_base='https://openrouter.ai/api/v1'"
+                )
+            
+            if not self.api_key:
+                raise ValueError("api_key is required for openai_compatible provider")
+            
+            self._client = OpenAI(
+                api_key=self.api_key,
+                base_url=self.api_base,
+            )
+            
+            if not self.model:
+                raise ValueError(
+                    "model is required for openai_compatible provider. "
+                    "Example: model='google/gemini-2.5-flash'"
+                )
             
         except ImportError:
             raise ImportError("openai package required: pip install openai")
@@ -157,7 +252,7 @@ class LLMProvider(BaseLLM):
         max_tokens: int = 4000,
     ) -> str:
         """Generate chat completion."""
-        if self.provider in ("azure_openai", "openai"):
+        if self.provider in ("azure_openai", "openai", "openai_compatible"):
             return self._openai_chat(messages, temperature, max_tokens)
         elif self.provider == "anthropic":
             return self._anthropic_chat(messages, temperature, max_tokens)
@@ -251,7 +346,7 @@ class LLMProvider(BaseLLM):
         prompt: str = "Describe this image in detail.",
     ) -> str:
         """Analyze an image using vision model."""
-        if self.provider in ("azure_openai", "openai"):
+        if self.provider in ("azure_openai", "openai", "openai_compatible"):
             messages = [
                 {
                     "role": "user",
@@ -302,15 +397,48 @@ def get_llm_provider(
     Factory function to create an LLM provider.
     
     Args:
-        provider: Provider name (azure_openai, openai, anthropic, ollama)
+        provider: Provider name:
+            - "openai": OpenAI API
+            - "azure_openai": Azure OpenAI Service
+            - "openai_compatible": Any OpenAI-compatible API
+            - "anthropic": Anthropic Claude
+            - "ollama": Local Ollama models
         api_key: API key
-        api_base: API base URL
-        api_version: API version (Azure)
+        api_base: API base URL (required for openai_compatible)
+        api_version: API version (Azure only)
         model: Model name
-        deployment: Deployment name (Azure)
+        deployment: Deployment name (Azure only)
     
     Returns:
         Configured LLMProvider instance
+    
+    Examples:
+        # OpenAI
+        llm = get_llm_provider("openai", api_key="sk-...")
+        
+        # OpenRouter (access 100+ models)
+        llm = get_llm_provider(
+            "openai_compatible",
+            api_key="sk-or-v1-...",
+            api_base="https://openrouter.ai/api/v1",
+            model="google/gemini-2.5-flash"
+        )
+        
+        # Groq (fast inference)
+        llm = get_llm_provider(
+            "openai_compatible",
+            api_key="gsk_...",
+            api_base="https://api.groq.com/openai/v1",
+            model="llama-3.1-70b-versatile"
+        )
+        
+        # Together AI
+        llm = get_llm_provider(
+            "openai_compatible",
+            api_key="...",
+            api_base="https://api.together.xyz/v1",
+            model="meta-llama/Llama-3-70b-chat-hf"
+        )
     """
     return LLMProvider(
         provider=provider,
@@ -319,5 +447,39 @@ def get_llm_provider(
         api_version=api_version,
         model=model,
         deployment=deployment,
+        **kwargs,
+    )
+
+
+# Convenience aliases for common providers
+def openrouter(api_key: str, model: str, **kwargs) -> LLMProvider:
+    """Create an OpenRouter provider."""
+    return LLMProvider(
+        provider="openai_compatible",
+        api_key=api_key,
+        api_base="https://openrouter.ai/api/v1",
+        model=model,
+        **kwargs,
+    )
+
+
+def groq(api_key: str, model: str = "llama-3.1-70b-versatile", **kwargs) -> LLMProvider:
+    """Create a Groq provider."""
+    return LLMProvider(
+        provider="openai_compatible",
+        api_key=api_key,
+        api_base="https://api.groq.com/openai/v1",
+        model=model,
+        **kwargs,
+    )
+
+
+def together(api_key: str, model: str, **kwargs) -> LLMProvider:
+    """Create a Together AI provider."""
+    return LLMProvider(
+        provider="openai_compatible",
+        api_key=api_key,
+        api_base="https://api.together.xyz/v1",
+        model=model,
         **kwargs,
     )

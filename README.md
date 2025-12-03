@@ -43,7 +43,8 @@ GraphMem is a state-of-the-art, self-evolving graph-based memory system for prod
 ### 🚀 Production Ready
 - **Neo4j Backend**: Enterprise graph database with ACID transactions
 - **Redis Caching**: Sub-millisecond retrieval
-- **Multi-LLM Support**: Azure OpenAI, OpenAI, Anthropic
+- **Multi-LLM Support**: OpenAI, Azure, Anthropic, OpenRouter, Groq, Together, Ollama
+- **Any OpenAI-Compatible API**: Works with 100+ models via OpenRouter, etc.
 - **Scalable**: Handles 100K+ entities efficiently
 
 ## 🏁 Quick Start
@@ -156,18 +157,88 @@ neo4j.close()
 redis.close()
 ```
 
+### Using Different LLM Providers
+
+GraphMem supports **any OpenAI-compatible API**, giving you access to 100+ models:
+
+```python
+from graphmem.llm.providers import LLMProvider, openrouter, groq, together
+
+# OpenAI
+llm = LLMProvider(
+    provider="openai",
+    api_key="sk-...",
+    model="gpt-4o",
+)
+
+# Azure OpenAI
+llm = LLMProvider(
+    provider="azure_openai",
+    api_key="your-key",
+    api_base="https://your-resource.openai.azure.com/",
+    api_version="2024-12-01-preview",
+    deployment="gpt-4",
+)
+
+# OpenRouter (100+ models including Gemini, Claude, Llama, etc.)
+llm = LLMProvider(
+    provider="openai_compatible",
+    api_key="sk-or-v1-...",
+    api_base="https://openrouter.ai/api/v1",
+    model="google/gemini-2.0-flash-001",  # or any model on OpenRouter
+)
+
+# Convenience function for OpenRouter
+llm = openrouter(
+    api_key="sk-or-v1-...",
+    model="anthropic/claude-3.5-sonnet",
+)
+
+# Groq (ultra-fast inference)
+llm = LLMProvider(
+    provider="openai_compatible",
+    api_key="gsk_...",
+    api_base="https://api.groq.com/openai/v1",
+    model="llama-3.1-70b-versatile",
+)
+
+# Together AI
+llm = LLMProvider(
+    provider="openai_compatible",
+    api_key="...",
+    api_base="https://api.together.xyz/v1",
+    model="meta-llama/Llama-3-70b-chat-hf",
+)
+
+# Anthropic Claude (native)
+llm = LLMProvider(
+    provider="anthropic",
+    api_key="sk-ant-...",
+    model="claude-3-5-sonnet-20241022",
+)
+
+# Local Ollama
+llm = LLMProvider(
+    provider="ollama",
+    model="llama3.2",
+)
+
+# Use it!
+response = llm.complete("What is the capital of France?")
+print(response)
+```
+
 ### LLM-Based Knowledge Extraction
 
 ```python
 from graphmem.llm.providers import LLMProvider
 
-# Initialize LLM provider
+# Initialize LLM provider (any provider works!)
 llm = LLMProvider(
-    provider="azure_openai",
-    api_key="your-api-key",
-    api_base="https://your-endpoint.openai.azure.com/",
-    api_version="2024-12-01-preview",
-    deployment="gpt-4",
+    provider="openai_compatible",
+    api_key="sk-or-v1-...",
+    api_base="https://openrouter.ai/api/v1",
+    model="google/gemini-2.0-flash-001",
 )
 
 # Extract knowledge from text
@@ -313,8 +384,9 @@ if importance < 0.1:
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| `llm_provider` | LLM provider (azure_openai, openai, anthropic) | `azure_openai` |
+| `llm_provider` | LLM provider (see below) | `azure_openai` |
 | `llm_api_key` | API key for LLM | Required |
+| `llm_api_base` | API base URL (for openai_compatible) | Provider default |
 | `llm_model` | Model name/deployment | `gpt-4` |
 | `embedding_provider` | Embedding provider | `azure_openai` |
 | `neo4j_uri` | Neo4j connection URI | `bolt://localhost:7687` |
@@ -323,6 +395,21 @@ if importance < 0.1:
 | `decay_rate` | Importance decay rate | `0.01` |
 | `consolidation_threshold` | Similarity for merging | `0.85` |
 | `entity_resolution_threshold` | Similarity for entity matching | `0.85` |
+
+### Supported LLM Providers
+
+| Provider | `llm_provider` | `api_base` |
+|----------|----------------|------------|
+| OpenAI | `openai` | (default) |
+| Azure OpenAI | `azure_openai` | Your Azure endpoint |
+| OpenRouter | `openai_compatible` | `https://openrouter.ai/api/v1` |
+| Groq | `openai_compatible` | `https://api.groq.com/openai/v1` |
+| Together AI | `openai_compatible` | `https://api.together.xyz/v1` |
+| Fireworks | `openai_compatible` | `https://api.fireworks.ai/inference/v1` |
+| Mistral | `openai_compatible` | `https://api.mistral.ai/v1` |
+| DeepInfra | `openai_compatible` | `https://api.deepinfra.com/v1/openai` |
+| Anthropic | `anthropic` | (default) |
+| Ollama | `ollama` | `http://localhost:11434` |
 
 ## 🧪 Running Evaluations
 
