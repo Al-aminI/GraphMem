@@ -691,6 +691,83 @@ print(response.answer)  # "Tesla's mission is to accelerate the transition to su
 💡 Tesla's core mission is to accelerate the global transition to sustainable energy.
 ```
 
+### Full Production Stack: Neo4j + Redis
+
+```python
+from graphmem import GraphMem, MemoryConfig
+
+config = MemoryConfig(
+    # LLM (OpenRouter, OpenAI, Azure, Groq, etc.)
+    llm_provider="openai_compatible",
+    llm_api_key="sk-or-v1-your-key",
+    llm_api_base="https://openrouter.ai/api/v1",
+    llm_model="google/gemini-2.0-flash-001",
+    
+    embedding_provider="openai_compatible",
+    embedding_api_key="sk-or-v1-your-key",
+    embedding_api_base="https://openrouter.ai/api/v1",
+    embedding_model="openai/text-embedding-3-small",
+    
+    # Neo4j Cloud for graph persistence
+    neo4j_uri="neo4j+ssc://your-instance.databases.neo4j.io",
+    neo4j_username="neo4j",
+    neo4j_password="your-password",
+    
+    # Redis Cloud for high-speed caching
+    redis_url="redis://default:password@your-redis.cloud.redislabs.com:17983",
+)
+
+memory = GraphMem(config)
+
+# Ingest multiple documents
+memory.ingest("Tesla is led by CEO Elon Musk. Founded in 2003...")
+memory.ingest("SpaceX, also led by Elon Musk, builds rockets...")
+memory.ingest("Neuralink, founded by Elon Musk, develops brain interfaces...")
+
+# Query - Redis caches results for faster subsequent queries
+response = memory.query("Who is the CEO of Tesla?")
+print(response.answer)  # "Elon Musk is the CEO of Tesla."
+
+response = memory.query("What is SpaceX's goal?")
+print(response.answer)  # "SpaceX's goal is to make humanity multiplanetary..."
+
+# Evolve memory
+memory.evolve()
+
+# Save and close
+memory.save()
+memory.close()
+```
+
+**Tested Output (Neo4j Cloud + Redis Cloud):**
+```
+📄 Ingesting Tesla document...
+   → 10 entities, 8 relationships
+
+📄 Ingesting SpaceX document...
+   → 11 entities, 7 relationships
+
+📄 Ingesting Neuralink document...
+   → 7 entities, 5 relationships
+
+❓ Who is the CEO of Tesla?
+💡 Elon Musk is the CEO of Tesla.
+
+❓ What is SpaceX's goal?
+💡 SpaceX's goal is to make humanity multiplanetary by establishing a colony on Mars.
+
+❓ What does Neuralink do?
+💡 Neuralink develops brain-computer interfaces and aims to help treat 
+   neurological conditions and eventually achieve human-AI symbiosis.
+
+🔄 14 evolution events
+
+📊 Memory Statistics:
+   • Entities: 23
+   • Relationships: 28
+   • Communities: 3
+```
+
 ## 🔧 Configuration Options
 
 | Option | Description | Default |
