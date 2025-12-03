@@ -74,6 +74,132 @@ print(f"Nodes: {memory.memory.node_count}")
 print(f"Edges: {memory.memory.edge_count}")
 ```
 
+### 🚀 Production Example: Complete Agent Memory Pipeline
+
+A complete example showing knowledge extraction, semantic search, and question answering using any OpenAI-compatible API:
+
+```python
+from graphmem.llm.providers import LLMProvider
+from graphmem.llm.embeddings import EmbeddingProvider
+
+# ==============================================================================
+# STEP 1: Initialize with OpenRouter (or any OpenAI-compatible API)
+# ==============================================================================
+
+# Use OpenRouter to access Gemini, Claude, Llama, or any model
+llm = LLMProvider(
+    provider="openai_compatible",
+    api_key="sk-or-v1-your-key",
+    api_base="https://openrouter.ai/api/v1",
+    model="google/gemini-2.0-flash-001",  # Or any model
+)
+
+embeddings = EmbeddingProvider(
+    provider="openai_compatible",
+    api_key="sk-or-v1-your-key",
+    api_base="https://openrouter.ai/api/v1",
+    model="openai/text-embedding-3-small",
+)
+
+# ==============================================================================
+# STEP 2: Extract Knowledge from Documents
+# ==============================================================================
+
+documents = [
+    "Tesla, Inc. is an electric vehicle company. Elon Musk is the CEO.",
+    "SpaceX is led by Elon Musk. The company designs rockets and spacecraft.",
+]
+
+EXTRACTION_PROMPT = """Extract entities and relationships from the text.
+Format:
+ENTITY|name|type|description
+RELATION|source|relationship|target
+
+Text: {text}
+
+Output:"""
+
+entities = []
+relations = []
+
+for doc in documents:
+    result = llm.complete(EXTRACTION_PROMPT.format(text=doc))
+    # Parse entities and relations from result...
+    for line in result.split('\n'):
+        if line.startswith('ENTITY|'):
+            parts = line.split('|')
+            entities.append({'name': parts[1], 'type': parts[2]})
+        elif line.startswith('RELATION|'):
+            parts = line.split('|')
+            relations.append({'source': parts[1], 'rel': parts[2], 'target': parts[3]})
+
+print(f"Extracted {len(entities)} entities, {len(relations)} relations")
+
+# ==============================================================================
+# STEP 3: Generate Embeddings for Semantic Search
+# ==============================================================================
+
+entity_texts = [e['name'] for e in entities]
+entity_embeddings = embeddings.embed_batch(entity_texts)
+
+print(f"Generated {len(entity_embeddings)} embeddings (1536 dimensions)")
+
+# ==============================================================================
+# STEP 4: Semantic Search - Find Relevant Entities
+# ==============================================================================
+
+query = "Who leads electric vehicle companies?"
+query_embedding = embeddings.embed_text(query)
+
+# Calculate similarities and find top matches
+similarities = []
+for i, (entity, emb) in enumerate(zip(entities, entity_embeddings)):
+    sim = embeddings.cosine_similarity(query_embedding, emb)
+    similarities.append((entity, sim))
+
+similarities.sort(key=lambda x: x[1], reverse=True)
+
+print("Top relevant entities:")
+for entity, sim in similarities[:3]:
+    print(f"  {sim:.3f} - {entity['name']} ({entity['type']})")
+
+# ==============================================================================
+# STEP 5: Answer Questions with Graph Context
+# ==============================================================================
+
+context = "\n".join([f"- {e['name']} ({e['type']})" for e, _ in similarities[:5]])
+rel_context = "\n".join([f"- {r['source']} {r['rel']} {r['target']}" for r in relations])
+
+question = "What companies does Elon Musk lead?"
+
+ANSWER_PROMPT = f"""Based on the knowledge graph:
+
+ENTITIES:
+{context}
+
+RELATIONSHIPS:
+{rel_context}
+
+Question: {question}
+Answer:"""
+
+answer = llm.complete(ANSWER_PROMPT)
+print(f"Answer: {answer}")
+```
+
+**Output:**
+```
+Extracted 8 entities, 6 relations
+Generated 8 embeddings (1536 dimensions)
+
+Top relevant entities:
+  0.586 - Tesla, Inc. (Company)
+  0.489 - Elon Musk (Person)
+  0.478 - SpaceX (Organization)
+
+Answer: Elon Musk leads Tesla, Inc. and SpaceX.
+```
+
 ### Working with Memory Directly
 
 ```python
