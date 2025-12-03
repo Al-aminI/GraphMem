@@ -188,16 +188,18 @@ While benchmarks on small datasets may show similar performance, **GraphMem's tr
 ## ✨ Key Features
 
 ### 🔄 Self-Evolving Memory
-- **Importance Scoring**: Multi-factor scoring (recency, frequency, centrality, feedback)
+- **PageRank Centrality**: Hub detection using Google's algorithm (identifies key entities)
+- **Importance Scoring**: Multi-factor formula ρ(e) = w1·f1 + w2·f2 + w3·f3 + w4·f4
 - **Memory Decay**: Exponential decay inspired by Ebbinghaus forgetting curve
 - **Consolidation**: LLM-based merging of redundant memories (80% reduction)
-- **Temporal Tracking**: Track how facts change over time
+- **Temporal Validity**: Track when facts are valid [valid_from, valid_until]
 
 ### 🕸️ Graph-Based Knowledge
 - **Entity Resolution**: Hybrid lexical + semantic matching (95% accuracy)
 - **Community Detection**: Automatic topic clustering with summaries
 - **Multi-hop Reasoning**: Graph traversal for complex queries
 - **O(1) Entity Lookup**: Direct graph indexing vs O(n) vector search
+- **Point-in-Time Queries**: "Who was CEO in 2015?" with temporal filtering
 
 ### 📚 Context Engineering
 - **Semantic Chunking**: 0.90 coherence (vs 0.56 for fixed-size)
@@ -756,19 +758,67 @@ graphmem/
 
 ## 📖 Self-Evolution Mechanisms
 
-### Importance Scoring
+### Importance Scoring with PageRank
+
+GraphMem uses **PageRank centrality** (same algorithm Google uses for web pages) to identify important entities:
 
 ```python
-# Importance is computed from multiple factors:
+# Importance formula (per paper Equation 7):
+# ρ(e) = w1·f1 + w2·f2 + w3·f3 + w4·f4
+
 importance = (
-    w1 * recency +      # exp(-λ * time_since_access)
-    w2 * frequency +    # log(1 + access_count) / log(1 + max_count)
-    w3 * centrality +   # PageRank score
-    w4 * feedback       # explicit user signals
+    w1 * recency +      # f1: exp(-λ * time_since_access) - Recent = important
+    w2 * frequency +    # f2: log(1 + access_count) - Frequently accessed = important
+    w3 * pagerank +     # f3: PageRank(e, G) - Well-connected = important (HUB detection)
+    w4 * feedback       # f4: User signals - Explicit importance
 )
 
 # Default weights: (0.3, 0.3, 0.2, 0.2)
 ```
+
+**PageRank identifies hub entities** - Elon Musk connected to Tesla, SpaceX, Neuralink scores higher than "Austin" connected only to Tesla.
+
+### Temporal Validity Intervals
+
+Relationships have **time bounds** `[valid_from, valid_until]` for tracking when facts are true:
+
+```python
+from datetime import datetime
+from graphmem.core.memory_types import MemoryEdge
+
+# Track CEO transitions
+john_ceo = MemoryEdge(
+    source_id="john",
+    target_id="acme_corp",
+    relation_type="CEO_OF",
+    valid_from=datetime(2010, 1, 1),
+    valid_until=datetime(2018, 6, 30),  # John left
+)
+
+jane_ceo = MemoryEdge(
+    source_id="jane",
+    target_id="acme_corp",
+    relation_type="CEO_OF",
+    valid_from=datetime(2018, 7, 1),
+    valid_until=None,  # Still current CEO
+)
+
+# Query: "Who was CEO in 2015?"
+john_ceo.is_valid_at(datetime(2015, 6, 1))  # True ✅
+jane_ceo.is_valid_at(datetime(2015, 6, 1))  # False ❌
+
+# Query: "Who is CEO now?"
+john_ceo.is_valid_at(datetime.utcnow())     # False ❌
+jane_ceo.is_valid_at(datetime.utcnow())     # True ✅
+
+# Mark relationship as ended
+john_ceo.supersede(datetime(2018, 6, 30))   # Archives with valid_until
+```
+
+**Use cases:**
+- "Who was our legal counsel before 2020?"
+- "What contracts were active last quarter?"
+- "Track CEO/leadership changes over time"
 
 ### Memory Decay
 
