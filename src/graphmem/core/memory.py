@@ -296,8 +296,7 @@ class GraphMem:
         """Initialize all components."""
         from graphmem.llm.providers import get_llm_provider
         from graphmem.llm.embeddings import get_embedding_provider
-        from graphmem.stores.neo4j_store import Neo4jStore
-        from graphmem.stores.redis_cache import RedisCache
+        from graphmem.stores.memory_store import InMemoryStore, InMemoryCache
         from graphmem.graph.knowledge_graph import KnowledgeGraph
         from graphmem.graph.entity_resolver import EntityResolver
         from graphmem.graph.community_detector import CommunityDetector
@@ -322,20 +321,44 @@ class GraphMem:
             api_base=self.config.embedding_api_base,
         )
         
-        # Initialize storage
-        self._graph_store = Neo4jStore(
-            uri=self.config.neo4j_uri,
-            username=self.config.neo4j_username,
-            password=self.config.neo4j_password,
-            database=self.config.neo4j_database,
+        # Initialize storage (Neo4j if configured, otherwise in-memory)
+        use_neo4j = (
+            self.config.neo4j_uri and 
+            self.config.neo4j_uri != "bolt://localhost:7687" and
+            "localhost" not in self.config.neo4j_uri
         )
         
-        # Initialize cache
+        if use_neo4j:
+            try:
+                from graphmem.stores.neo4j_store import Neo4jStore
+                self._graph_store = Neo4jStore(
+                    uri=self.config.neo4j_uri,
+                    username=self.config.neo4j_username,
+                    password=self.config.neo4j_password,
+                    database=self.config.neo4j_database,
+                )
+                logger.info("Using Neo4j for persistent storage")
+            except Exception as e:
+                logger.warning(f"Neo4j unavailable, falling back to in-memory: {e}")
+                self._graph_store = InMemoryStore()
+        else:
+            self._graph_store = InMemoryStore()
+            logger.info("Using in-memory storage (set neo4j_uri for persistence)")
+        
+        # Initialize cache (Redis if configured, otherwise in-memory)
         if self.config.redis_url:
-            self._cache = RedisCache(
-                url=self.config.redis_url,
-                ttl=self.config.redis_ttl,
-            )
+            try:
+                from graphmem.stores.redis_cache import RedisCache
+                self._cache = RedisCache(
+                    url=self.config.redis_url,
+                    ttl=self.config.redis_ttl,
+                )
+                logger.info("Using Redis cache")
+            except Exception as e:
+                logger.warning(f"Redis unavailable, using in-memory cache: {e}")
+                self._cache = InMemoryCache(ttl=self.config.redis_ttl)
+        else:
+            self._cache = InMemoryCache(ttl=self.config.redis_ttl)
         
         # Initialize entity resolver
         self._entity_resolver = EntityResolver(

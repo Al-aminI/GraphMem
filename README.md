@@ -55,23 +55,67 @@ GraphMem is a state-of-the-art, self-evolving graph-based memory system for prod
 pip install agentic-graph-mem
 ```
 
-### Basic Usage
+### Basic Usage - It's This Simple!
 
 ```python
 from graphmem import GraphMem, MemoryConfig
 
-# Initialize with configuration
+# Initialize (works with ANY OpenAI-compatible API!)
 config = MemoryConfig(
-    llm_provider="azure_openai",
-    llm_api_key="your-api-key",
-    llm_model="gpt-4",
+    llm_provider="openai_compatible",
+    llm_api_key="sk-or-v1-your-key",
+    llm_api_base="https://openrouter.ai/api/v1",  # Or OpenAI, Azure, Groq, etc.
+    llm_model="google/gemini-2.0-flash-001",
+    
+    embedding_provider="openai_compatible",
+    embedding_api_key="sk-or-v1-your-key",
+    embedding_api_base="https://openrouter.ai/api/v1",
+    embedding_model="openai/text-embedding-3-small",
 )
+
 memory = GraphMem(config)
 
-# Access the memory object
-print(f"Memory ID: {memory.memory_id}")
-print(f"Nodes: {memory.memory.node_count}")
-print(f"Edges: {memory.memory.edge_count}")
+# Ingest documents - GraphMem extracts knowledge automatically
+memory.ingest("""
+    Tesla, Inc. is an American electric vehicle company. 
+    Elon Musk is the CEO. Founded in 2003, Tesla's mission 
+    is to accelerate the transition to sustainable energy.
+""")
+
+memory.ingest("""
+    SpaceX is led by Elon Musk as CEO. Founded in 2002, 
+    SpaceX designs rockets. Goal: make humanity multiplanetary.
+""")
+
+# Query the memory - just ask questions!
+response = memory.query("Who is the CEO of Tesla?")
+print(response.answer)  # "Elon Musk"
+
+response = memory.query("What companies does Elon Musk lead?")
+print(response.answer)  # "Tesla and SpaceX"
+
+# Evolve memory - self-improving like human memory
+memory.evolve()
+
+# That's it! 3 methods: ingest(), query(), evolve()
+```
+
+**Output (Tested):**
+```
+📄 Ingesting Tesla document...
+   → 8 entities, 7 relationships
+
+📄 Ingesting SpaceX document...
+   → 14 entities, 12 relationships
+
+❓ Who is the CEO of Tesla?
+💡 Elon Musk
+
+❓ What companies does Elon Musk lead?
+💡 Tesla and SpaceX
+
+🔄 Evolving memory...
+✅ 11 evolution events
 ```
 
 ### 🚀 Production Example: Complete Agent Memory Pipeline
