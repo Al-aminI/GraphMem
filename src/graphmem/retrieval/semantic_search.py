@@ -6,6 +6,8 @@ Supports both in-memory search and Neo4j vector index for scalability.
 """
 
 from __future__ import annotations
+import hashlib
+import json
 import logging
 from typing import List, Dict, Any, Optional, Tuple, TYPE_CHECKING
 import numpy as np
@@ -107,6 +109,7 @@ class SemanticSearch:
         Search for similar nodes.
         
         Uses Neo4j vector index if available, otherwise falls back to in-memory search.
+        Redis caching accelerates repeated queries.
         
         Args:
             query: Search query
@@ -119,6 +122,26 @@ class SemanticSearch:
         """
         top_k = top_k or self.top_k
         min_similarity = min_similarity or self.min_similarity
+        
+        # Generate query hash for caching
+        query_hash = hashlib.md5(
+            f"{query}:{top_k}:{min_similarity}:{json.dumps(filters or {}, sort_keys=True)}".encode()
+        ).hexdigest()
+        
+        # Check Redis cache first (multi-tenant safe)
+        if self.cache and self.memory_id:
+            try:
+                cached = self.cache.get_search_result(
+                    memory_id=self.memory_id,
+                    query_hash=query_hash,
+                    user_id=self.user_id,
+                )
+                if cached:
+                    logger.debug(f"Cache hit for search query: {query[:50]}")
+                    # Reconstruct MemoryNode objects from cached data
+                    return self._deserialize_results(cached)
+            except Exception as e:
+                logger.warning(f"Cache lookup failed: {e}")
         
         # Get query embedding
         try:
@@ -145,6 +168,9 @@ class SemanticSearch:
                 # Apply filters
                 if filters:
                     results = [(n, s) for n, s in results if self._matches_filters(n, filters)]
+                
+                # Cache the results
+                self._cache_results(query_hash, results)
                 
                 logger.debug(f"Neo4j vector search returned {len(results)} results")
                 return results
@@ -201,7 +227,95 @@ class SemanticSearch:
         
         # Sort by combined score (similarity + importance + recency + access) and limit
         results.sort(key=lambda x: x[1], reverse=True)
-        return results[:top_k]
+        final_results = results[:top_k]
+        
+        # Cache the results
+        self._cache_results(query_hash, final_results)
+        
+        return final_results
+    
+    def _cache_results(self, query_hash: str, results: List[Tuple[MemoryNode, float]]) -> None:
+        """Cache search results in Redis (multi-tenant safe)."""
+        if self.cache and self.memory_id and results:
+            try:
+                serialized = [
+                    {
+                        "node": self._serialize_node(node),
+                        "score": score,
+                    }
+                    for node, score in results
+                ]
+                self.cache.cache_search_result(
+                    memory_id=self.memory_id,
+                    query_hash=query_hash,
+                    results=serialized,
+                    user_id=self.user_id,
+                )
+                logger.debug(f"Cached {len(results)} search results")
+            except Exception as e:
+                logger.warning(f"Failed to cache search results: {e}")
+    
+    def _serialize_node(self, node: MemoryNode) -> Dict[str, Any]:
+        """Serialize a MemoryNode for caching."""
+        return {
+            "id": node.id,
+            "name": node.name,
+            "entity_type": node.entity_type,
+            "description": node.description,
+            "canonical_name": node.canonical_name,
+            "aliases": list(node.aliases),
+            "properties": node.properties,
+            "importance": node.importance.name,
+            "access_count": node.access_count,
+            "user_id": node.user_id,
+            "memory_id": node.memory_id,
+            "created_at": str(node.created_at) if node.created_at else None,
+            "accessed_at": str(node.accessed_at) if node.accessed_at else None,
+        }
+    
+    def _deserialize_results(self, cached: List[Dict]) -> List[Tuple[MemoryNode, float]]:
+        """Deserialize cached search results."""
+        from graphmem.core.memory_types import MemoryImportance
+        from datetime import datetime
+        
+        results = []
+        for item in cached:
+            node_data = item["node"]
+            score = item["score"]
+            
+            # Parse datetime strings
+            created_at = None
+            if node_data.get("created_at") and node_data["created_at"] != "None":
+                try:
+                    created_at = datetime.fromisoformat(node_data["created_at"].replace("Z", "+00:00"))
+                except:
+                    pass
+            
+            accessed_at = None
+            if node_data.get("accessed_at") and node_data["accessed_at"] != "None":
+                try:
+                    accessed_at = datetime.fromisoformat(node_data["accessed_at"].replace("Z", "+00:00"))
+                except:
+                    pass
+            
+            node = MemoryNode(
+                id=node_data["id"],
+                name=node_data["name"],
+                entity_type=node_data.get("entity_type", "Entity"),
+                description=node_data.get("description"),
+                canonical_name=node_data.get("canonical_name"),
+                aliases=set(node_data.get("aliases", [])),
+                properties=node_data.get("properties", {}),
+                importance=MemoryImportance[node_data.get("importance", "MEDIUM")],
+                access_count=node_data.get("access_count", 0),
+                user_id=node_data.get("user_id"),
+                memory_id=node_data.get("memory_id"),
+                created_at=created_at,
+                accessed_at=accessed_at,
+            )
+            results.append((node, score))
+        
+        return results
     
     def enable_neo4j_vector(self, neo4j_store: "Neo4jStore", memory_id: str) -> bool:
         """

@@ -38,11 +38,29 @@ class InMemoryStore:
         self._memories[memory.id] = deepcopy(memory)
         logger.debug(f"Saved memory {memory.id} to in-memory store")
     
-    def load_memory(self, memory_id: str) -> Optional[Memory]:
-        """Load memory from in-memory storage."""
+    def load_memory(self, memory_id: str, user_id: str = None) -> Optional[Memory]:
+        """
+        Load memory from in-memory storage.
+        
+        Args:
+            memory_id: Memory ID to load
+            user_id: User ID for multi-tenant isolation (filters nodes)
+        """
         memory = self._memories.get(memory_id)
         if memory:
-            return deepcopy(memory)
+            loaded = deepcopy(memory)
+            # Filter by user_id if provided
+            if user_id:
+                loaded.nodes = {
+                    nid: node for nid, node in loaded.nodes.items()
+                    if node.user_id == user_id or node.user_id is None
+                }
+                # Filter edges to only include those between remaining nodes
+                loaded.edges = {
+                    eid: edge for eid, edge in loaded.edges.items()
+                    if edge.source_id in loaded.nodes and edge.target_id in loaded.nodes
+                }
+            return loaded
         return None
     
     def delete_memory(self, memory_id: str) -> None:
@@ -72,6 +90,9 @@ class InMemoryStore:
 class InMemoryCache:
     """
     Simple in-memory cache (replacement for Redis when not available).
+    
+    Provides the same interface as RedisCache for seamless fallback.
+    Includes multi-tenant support via user_id in cache keys.
     """
     
     def __init__(self, ttl: int = 3600):
@@ -80,32 +101,120 @@ class InMemoryCache:
         self.ttl = ttl
         logger.info("InMemoryCache initialized")
     
-    def get(self, key: str) -> Optional[any]:
+    def _key(self, *parts: str) -> str:
+        """Build a cache key."""
+        return ":".join(parts)
+    
+    def get(self, *key_parts: str) -> Optional[any]:
         """Get value from cache."""
+        key = self._key(*key_parts) if len(key_parts) > 1 else key_parts[0]
         return self._cache.get(key)
     
-    def set(self, key: str, value: any, ttl: Optional[int] = None) -> None:
+    def set(self, *key_parts: str, value: any, ttl: Optional[int] = None) -> bool:
         """Set value in cache."""
+        # Last part before value is the key
+        key = self._key(*key_parts)
         self._cache[key] = value
+        return True
     
     def delete(self, key: str) -> None:
         """Delete value from cache."""
         if key in self._cache:
             del self._cache[key]
     
-    def invalidate(self, prefix: str) -> None:
-        """Invalidate all keys with prefix."""
-        keys_to_delete = [k for k in self._cache if k.startswith(prefix)]
+    def invalidate(self, memory_id: str, user_id: str = "default") -> None:
+        """
+        Invalidate all cache entries for a user's memory.
+        
+        Multi-tenant safe: matches user_id in key pattern.
+        """
+        pattern_parts = [user_id, memory_id]
+        keys_to_delete = [
+            k for k in self._cache 
+            if all(part in k for part in pattern_parts)
+        ]
         for key in keys_to_delete:
             del self._cache[key]
+        logger.debug(f"Invalidated {len(keys_to_delete)} in-memory cache entries")
     
-    def get_embedding(self, key: str) -> Optional[List[float]]:
+    # Specialized cache methods matching RedisCache interface
+    
+    def get_embedding(self, text_hash: str) -> Optional[List[float]]:
         """Get cached embedding."""
-        return self._cache.get(f"emb:{key}")
+        return self._cache.get(f"embedding:{text_hash}")
     
-    def cache_embedding(self, key: str, embedding: List[float]) -> None:
+    def cache_embedding(self, text_hash: str, embedding: List[float], ttl: int = 86400) -> bool:
         """Cache an embedding."""
-        self._cache[f"emb:{key}"] = embedding
+        self._cache[f"embedding:{text_hash}"] = embedding
+        return True
+    
+    def get_search_result(
+        self,
+        memory_id: str,
+        query_hash: str,
+        user_id: str = "default",
+    ) -> Optional[list]:
+        """Get cached search results."""
+        key = self._key("search", user_id, memory_id, query_hash)
+        return self._cache.get(key)
+    
+    def cache_search_result(
+        self,
+        memory_id: str,
+        query_hash: str,
+        results: list,
+        user_id: str = "default",
+        ttl: int = 300,
+    ) -> bool:
+        """Cache search results."""
+        key = self._key("search", user_id, memory_id, query_hash)
+        self._cache[key] = results
+        return True
+    
+    def get_query_result(
+        self,
+        memory_id: str,
+        query_hash: str,
+        user_id: str = "default",
+    ) -> Optional[Dict[str, Any]]:
+        """Get cached query result."""
+        key = self._key("query", user_id, memory_id, query_hash)
+        return self._cache.get(key)
+    
+    def cache_query_result(
+        self,
+        memory_id: str,
+        query_hash: str,
+        result: Dict[str, Any],
+        user_id: str = "default",
+        ttl: int = 300,
+    ) -> bool:
+        """Cache query result."""
+        key = self._key("query", user_id, memory_id, query_hash)
+        self._cache[key] = result
+        return True
+    
+    def get_community_context(
+        self,
+        memory_id: str,
+        community_id: int,
+        user_id: str = "default",
+    ) -> Optional[Dict[str, Any]]:
+        """Get cached community context."""
+        key = self._key("community", user_id, memory_id, str(community_id))
+        return self._cache.get(key)
+    
+    def cache_community_context(
+        self,
+        memory_id: str,
+        community_id: int,
+        context: Dict[str, Any],
+        user_id: str = "default",
+    ) -> bool:
+        """Cache community context."""
+        key = self._key("community", user_id, memory_id, str(community_id))
+        self._cache[key] = context
+        return True
     
     def close(self) -> None:
         """Close cache (no-op for in-memory)."""

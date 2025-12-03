@@ -331,12 +331,29 @@ class GraphMem:
             api_base=self.config.llm_api_base,
         )
         
-        # Initialize embeddings
+        # Initialize cache (Redis if configured, otherwise in-memory)
+        # Cache must be initialized BEFORE embeddings so embeddings can use it
+        if self.config.redis_url:
+            try:
+                from graphmem.stores.redis_cache import RedisCache
+                self._cache = RedisCache(
+                    url=self.config.redis_url,
+                    ttl=self.config.redis_ttl,
+                )
+                logger.info("Using Redis cache")
+            except Exception as e:
+                logger.warning(f"Redis unavailable, using in-memory cache: {e}")
+                self._cache = InMemoryCache(ttl=self.config.redis_ttl)
+        else:
+            self._cache = InMemoryCache(ttl=self.config.redis_ttl)
+        
+        # Initialize embeddings (with cache for embedding reuse)
         self._embeddings = get_embedding_provider(
             provider=self.config.embedding_provider,
             model=self.config.embedding_model,
             api_key=self.config.embedding_api_key,
             api_base=self.config.embedding_api_base,
+            cache=self._cache,  # Pass cache for embedding caching
         )
         
         # Initialize storage (Neo4j if configured, otherwise in-memory)
@@ -359,21 +376,6 @@ class GraphMem:
         else:
             self._graph_store = InMemoryStore()
             logger.info("Using in-memory storage (set neo4j_uri for persistence)")
-        
-        # Initialize cache (Redis if configured, otherwise in-memory)
-        if self.config.redis_url:
-            try:
-                from graphmem.stores.redis_cache import RedisCache
-                self._cache = RedisCache(
-                    url=self.config.redis_url,
-                    ttl=self.config.redis_ttl,
-                )
-                logger.info("Using Redis cache")
-            except Exception as e:
-                logger.warning(f"Redis unavailable, using in-memory cache: {e}")
-                self._cache = InMemoryCache(ttl=self.config.redis_ttl)
-        else:
-            self._cache = InMemoryCache(ttl=self.config.redis_ttl)
         
         # Initialize entity resolver
         self._entity_resolver = EntityResolver(
@@ -549,9 +551,9 @@ class GraphMem:
             # Persist to storage
             self._graph_store.save_memory(self._memory)
             
-            # Invalidate cache
+            # Invalidate cache (multi-tenant safe)
             if self._cache:
-                self._cache.invalidate(self.memory_id)
+                self._cache.invalidate(self.memory_id, user_id=self.user_id)
             
             elapsed = time.time() - start_time
             
@@ -801,7 +803,7 @@ class GraphMem:
                 self._graph_store.save_memory(self._memory)
                 
                 if self._cache:
-                    self._cache.invalidate(self.memory_id)
+                    self._cache.invalidate(self.memory_id, user_id=self.user_id)
             
             self._evolution_history.extend(events)
             self._metrics["evolutions"] += len(events)
@@ -893,7 +895,7 @@ class GraphMem:
             self._graph_store.clear_memory(self.memory_id)
             
             if self._cache:
-                self._cache.invalidate(self.memory_id)
+                self._cache.invalidate(self.memory_id, user_id=self.user_id)
             
             self._create_new_memory()
             self._evolution_history.clear()
