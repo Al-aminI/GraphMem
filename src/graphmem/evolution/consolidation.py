@@ -218,7 +218,7 @@ class MemoryConsolidation:
             if node.importance.value > highest_importance.value:
                 highest_importance = node.importance
         
-        # Create merged node
+        # Create merged node (preserving user_id for multi-tenant isolation)
         merged = MemoryNode(
             id=best_node.id,
             name=best_node.name,
@@ -226,6 +226,7 @@ class MemoryConsolidation:
             description=self._best_description(all_descriptions) or best_node.description,
             canonical_name=best_node.canonical_name or best_node.name,
             aliases=all_aliases,
+            embedding=best_node.embedding,  # Preserve embedding
             properties={
                 **best_node.properties,
                 "merged_from": [n.id for n in nodes],
@@ -233,6 +234,7 @@ class MemoryConsolidation:
             },
             importance=highest_importance,
             access_count=total_access,
+            user_id=best_node.user_id,  # Multi-tenant isolation
             memory_id=memory.id,
         )
         
