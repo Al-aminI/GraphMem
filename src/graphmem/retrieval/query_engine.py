@@ -176,32 +176,52 @@ class QueryEngine:
         """Query a single community for an answer."""
         # Get entities in this cluster
         cluster_nodes = [n for n in nodes if n.name in cluster.entities]
+        cluster_node_ids = {n.id for n in cluster_nodes}
+        
+        # Get edges involving cluster nodes
         cluster_edges = [
             e for e in edges
-            if any(n.id in (e.source_id, e.target_id) for n in cluster_nodes)
+            if e.source_id in cluster_node_ids or e.target_id in cluster_node_ids
         ]
         
-        # Build context
-        entity_context = self._format_entities(cluster_nodes)
+        # IMPORTANT: Also include connected nodes that aren't in this cluster
+        # This ensures cross-cluster relationships are visible
+        connected_node_ids = set()
+        for e in cluster_edges:
+            connected_node_ids.add(e.source_id)
+            connected_node_ids.add(e.target_id)
+        
+        # Add connected nodes that aren't already in cluster
+        all_relevant_nodes = list(cluster_nodes)
+        for n in nodes:
+            if n.id in connected_node_ids and n.id not in cluster_node_ids:
+                all_relevant_nodes.append(n)
+        
+        # Build context with ALL relevant nodes (cluster + connected)
+        entity_context = self._format_entities(all_relevant_nodes)
         rel_context = self._format_relationships(cluster_edges)
         
         prompt = f"""You are answering questions using knowledge from a memory system.
 
-Community Summary:
+COMMUNITY SUMMARY:
 {cluster.summary}
 
-Entity Details:
+ENTITIES IN THIS COMMUNITY:
 {entity_context}
 
-Relationships:
+RELATIONSHIPS:
 {rel_context}
 
-Question: {query}
+QUESTION: {query}
 
-Provide a direct answer based on the information above. If the information doesn't contain relevant details, say so.
+INSTRUCTIONS:
+1. Consider ALL entities and relationships shown above
+2. If multiple facts are relevant to the question, include them ALL
+3. Cross-reference the community summary with the specific entities and relationships
+4. Provide a comprehensive answer that covers all relevant information
 
 Respond in JSON format:
-{{"answer": "your answer", "confidence": 0-10}}"""
+{{"answer": "your comprehensive answer", "confidence": 0-10}}"""
         
         try:
             response = self.llm.complete(prompt)
@@ -239,13 +259,20 @@ Respond in JSON format:
             for i, a in enumerate(sorted_answers[:5])
         ])
         
-        prompt = f"""Synthesize these answers into a single coherent response:
+        prompt = f"""Synthesize these answers from different knowledge communities into a single comprehensive response.
 
+ANSWERS FROM DIFFERENT COMMUNITIES:
 {combined}
 
-Question: {query}
+QUESTION: {query}
 
-Provide the best synthesized answer:"""
+INSTRUCTIONS:
+1. Combine information from ALL answers, not just the highest confidence one
+2. If answers mention different entities or facts, include ALL of them
+3. Remove duplicates but preserve all unique information
+4. Present a unified, comprehensive answer
+
+Synthesized Answer:"""
         
         try:
             final_answer = self.llm.complete(prompt)
@@ -261,14 +288,21 @@ Provide the best synthesized answer:"""
         context: str,
     ) -> tuple:
         """Generate answer directly from context."""
-        prompt = f"""Answer the question using the provided context.
+        prompt = f"""You are answering questions based on a knowledge graph memory system.
 
-Context:
+CONTEXT (contains entities, relationships, and topic summaries):
 {context}
 
-Question: {query}
+QUESTION: {query}
 
-Answer (be direct and concise):"""
+INSTRUCTIONS:
+1. Carefully analyze ALL entities, relationships, and topic summaries provided
+2. Consider ALL relevant information, not just the first match
+3. If multiple entities or facts are relevant, include them ALL in your answer
+4. Synthesize information from different parts of the context
+5. Be comprehensive but concise
+
+Answer:"""
         
         try:
             answer = self.llm.complete(prompt)
