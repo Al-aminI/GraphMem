@@ -466,21 +466,18 @@ class Neo4jStore:
     
     def ensure_vector_index(self, memory_id: str = None) -> bool:
         """
-        Create global vector index for fast similarity search if not exists.
+        Ensure a vector index exists for Entity.embedding.
         
-        Neo4j 5.x+ required for native vector indexes.
-        Returns True if index was created/exists, False if not supported.
+        Neo4j allows only ONE vector index per label-property combination.
+        This method finds any existing vector index on Entity.embedding or creates one.
         
-        Note: Uses a single global index for all Entity nodes.
+        Returns True if index exists/was created, False if not supported.
         """
         if not self.use_vector_index:
             return False
         
         if self._vector_index_created:
             return True
-        
-        # Use a single global index name (not per-memory)
-        index_name = "graphmem_entity_vector_idx"
         
         try:
             # Check Neo4j version - vector indexes require 5.x+
@@ -493,40 +490,67 @@ class Neo4jStore:
                     self.use_vector_index = False
                     return False
             
-            # Check if index already exists
-            existing = self._execute_query(
-                "SHOW INDEXES WHERE name = $name",
-                {"name": index_name}
-            )
+            # Check for ANY existing vector index on Entity.embedding
+            # Neo4j only allows ONE vector index per label-property pair
+            existing = self._execute_query("""
+                SHOW INDEXES 
+                WHERE type = 'VECTOR' 
+                AND entityType = 'NODE'
+            """)
             
-            if existing:
-                logger.info(f"Vector index {index_name} already exists")
-                self._vector_index_created = True
-                return True
+            for idx in existing:
+                # Check if this index is on Entity label and embedding property
+                labels = idx.get("labelsOrTypes", [])
+                props = idx.get("properties", [])
+                if "Entity" in labels and "embedding" in props:
+                    self._vector_index_name = idx.get("name")
+                    state = idx.get("state", "UNKNOWN")
+                    if state == "ONLINE":
+                        logger.info(f"Found existing vector index: {self._vector_index_name} (ONLINE)")
+                        self._vector_index_created = True
+                        return True
+                    else:
+                        logger.info(f"Found vector index {self._vector_index_name} in state: {state}")
+                        self._vector_index_created = True
+                        return True
             
-            # Create vector index
-            # Note: This uses Cypher syntax for Neo4j 5.x
+            # No existing index - create one
+            index_name = "graphmem_entity_vector_idx"
+            self._vector_index_name = index_name
+            
             self._execute_query(
                 f"""
                 CREATE VECTOR INDEX {index_name} IF NOT EXISTS
                 FOR (n:Entity)
-                ON (n.embedding)
-                OPTIONS {{
-                    indexConfig: {{
-                        `vector.dimensions`: {self.embedding_dimensions},
-                        `vector.similarity_function`: 'cosine'
-                    }}
-                }}
+                ON n.embedding
+                OPTIONS {{indexConfig: {{
+                    `vector.dimensions`: {self.embedding_dimensions},
+                    `vector.similarity_function`: 'cosine'
+                }}}}
                 """,
                 write=True,
             )
             
-            logger.info(f"Created vector index {index_name} with {self.embedding_dimensions} dimensions")
+            logger.info(f"Created vector index {index_name}")
+            
+            # Wait for index to come ONLINE (up to 10 seconds)
+            import time
+            for _ in range(10):
+                status = self._execute_query(
+                    "SHOW INDEXES WHERE name = $name",
+                    {"name": index_name}
+                )
+                if status and status[0].get("state") == "ONLINE":
+                    logger.info(f"Vector index {index_name} is ONLINE")
+                    self._vector_index_created = True
+                    return True
+                time.sleep(1)
+            
             self._vector_index_created = True
             return True
             
         except Exception as e:
-            logger.warning(f"Could not create vector index: {e}. Falling back to in-memory search.")
+            logger.warning(f"Could not ensure vector index: {e}. Falling back to in-memory search.")
             self.use_vector_index = False
             return False
     
@@ -602,11 +626,11 @@ class Neo4jStore:
         # Ensure index exists
         self.ensure_vector_index()
         
-        if not self._vector_index_created:
+        if not self._vector_index_created or not hasattr(self, '_vector_index_name'):
             return self._vector_search_fallback(memory_id, query_embedding, top_k, min_score)
         
-        # Use global index name
-        index_name = "graphmem_entity_vector_idx"
+        # Use the discovered/created index name
+        index_name = self._vector_index_name
         
         try:
             # Use Neo4j vector search
