@@ -106,7 +106,8 @@ class SemanticSearch:
             logger.error(f"Failed to embed query: {e}")
             return []
         
-        # Calculate similarities
+        # Calculate similarities with importance weighting
+        # This is where evolution features (decay, consolidation) actually matter!
         results = []
         for node_id, node_vector in self._index.items():
             similarity = self._cosine_similarity(query_vector, node_vector)
@@ -117,9 +118,38 @@ class SemanticSearch:
                     # Apply filters
                     if filters and not self._matches_filters(node, filters):
                         continue
-                    results.append((node, similarity))
+                    
+                    # Skip nodes that have decayed too much (EPHEMERAL = 0)
+                    # Evolution's decay feature marks unimportant nodes
+                    if node.importance.value == 0:  # EPHEMERAL - skip decayed nodes
+                        continue
+                    
+                    # Weight similarity by importance (evolution matters!)
+                    # importance.value: CRITICAL=10, VERY_HIGH=8, HIGH=6, MEDIUM=5, LOW=3, VERY_LOW=1
+                    importance_weight = node.importance.value / 10.0  # Normalize to 0-1
+                    
+                    # Recency boost - recently accessed nodes are more relevant
+                    recency_boost = 0.0
+                    if node.accessed_at:
+                        from datetime import datetime
+                        hours_since_access = (datetime.utcnow() - node.accessed_at).total_seconds() / 3600
+                        if hours_since_access < 24:
+                            recency_boost = 0.1 * (1 - hours_since_access / 24)  # Up to 10% boost
+                    
+                    # Access count boost - frequently accessed nodes matter more
+                    access_boost = min(0.1, node.access_count * 0.01)  # Up to 10% boost
+                    
+                    # Combined score: 60% similarity + 25% importance + 10% recency + 5% access
+                    combined_score = (
+                        0.60 * similarity + 
+                        0.25 * importance_weight + 
+                        recency_boost + 
+                        access_boost
+                    )
+                    
+                    results.append((node, combined_score))
         
-        # Sort by similarity and limit
+        # Sort by combined score (similarity + importance + recency + access) and limit
         results.sort(key=lambda x: x[1], reverse=True)
         return results[:top_k]
     
