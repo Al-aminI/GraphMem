@@ -148,14 +148,15 @@ While benchmarks on small datasets may show similar performance, **GraphMem's tr
 │  │          │  │         │    │     │  │             │  │             │     │
 │  │ • Recency│  │• Forgetting  │     │  │ • Entities  │  │ • Embeddings│     │
 │  │ • Access │  │  curve   │   │     │  │ • Relations │  │ • Queries   │     │
-│  └─────────┘  └─────────┘    │     │  │ • Vectors   │  │ • State     │     │
-│                               │     │  └─────────────┘  └─────────────┘     │
+│  │ •PageRank│  │         │    │     │  │ • Vectors   │  │ • State     │     │
+│  └─────────┘  └─────────┘    │     │  │ • Temporal  │  └─────────────┘     │
+│                               │     │  └─────────────┘                      │
 │  ┌─────────┐  ┌─────────┐    │     │                                       │
-│  │Consolid-│  │Rehydra- │    │     │  ┌─────────────────────────────────┐  │
-│  │ation    │  │tion     │    │     │  │     In-Memory (Default)         │  │
+│  │Consolid-│  │Temporal │    │     │  ┌─────────────────────────────────┐  │
+│  │ation    │  │Validity │    │     │  │     In-Memory (Default)         │  │
 │  │         │  │         │    │     │  │                                 │  │
-│  │ • Merge │  │• Update │    │     │  │  No external DB required        │  │
-│  │  similar│  │  facts  │    │     │  └─────────────────────────────────┘  │
+│  │ • Merge │  │• [t_s,t_e]   │     │  │  No external DB required        │  │
+│  │  similar│  │• Supersede   │     │  └─────────────────────────────────┘  │
 │  └─────────┘  └─────────┘    │     │                                       │
 └───────────────────────────────┘     └───────────────────────────────────────┘
                                                         │
@@ -717,7 +718,7 @@ print(f"Assembled {len(context.split())} tokens of relevant context")
 graphmem/
 ├── core/
 │   ├── memory.py          # GraphMem main class
-│   ├── memory_types.py    # Memory, MemoryNode, MemoryEdge, MemoryCluster
+│   ├── memory_types.py    # Memory, MemoryNode, MemoryEdge (+ temporal validity)
 │   └── exceptions.py      # Custom exceptions
 │
 ├── graph/
@@ -727,7 +728,7 @@ graphmem/
 │
 ├── evolution/
 │   ├── memory_evolution.py # Evolution orchestrator
-│   ├── importance_scorer.py # Multi-factor importance
+│   ├── importance_scorer.py # PageRank centrality + multi-factor scoring
 │   ├── decay.py           # Exponential decay
 │   ├── consolidation.py   # LLM-based merging
 │   └── rehydration.py     # Memory restoration
@@ -747,7 +748,8 @@ graphmem/
 │   └── embeddings.py      # EmbeddingProvider
 │
 ├── stores/
-│   ├── neo4j_store.py     # Graph persistence
+│   ├── neo4j_store.py     # Graph persistence + temporal queries
+│   ├── memory_store.py    # In-memory store (default)
 │   └── redis_cache.py     # High-speed caching
 │
 └── evaluation/
