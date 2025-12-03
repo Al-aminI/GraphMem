@@ -9,9 +9,16 @@
 
 GraphMem is a state-of-the-art, self-evolving graph-based memory system for production AI agents. It achieves **99% token reduction**, **4.2× faster queries**, and **bounded memory growth** compared to naive RAG approaches.
 
-## 📊 Benchmark Results (Honest Evaluation)
+## 📊 Benchmark Results
 
-**Tested with:** OpenRouter (Gemini 2.0 Flash) + Neo4j Cloud + text-embedding-3-small
+**Tested with:** OpenRouter (Gemini 2.0 Flash) + Neo4j Cloud + Redis Cloud
+
+📋 **Run the evaluation yourself:**
+```bash
+cd graphmem/evaluation
+python run_eval.py
+```
+Uses [MultiHopRAG dataset](https://huggingface.co/datasets/yixuantt/MultiHopRAG) (2,556 QA samples, 609 documents)
 
 Note on Multi-hop
 
