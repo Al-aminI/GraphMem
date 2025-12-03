@@ -39,6 +39,7 @@ GraphMem is a state-of-the-art, self-evolving graph-based memory system for prod
 - **Relevance-Weighted Assembly**: 53% better context relevance
 - **Token Optimization**: 99% reduction through targeted retrieval
 - **Multi-source Synthesis**: Cross-document fact extraction
+- **Multi-Modal Processing**: Text, Markdown, JSON, CSV, Code, Web, PDF, Images, Audio
 
 ### 🚀 Production Ready
 - **Neo4j Backend**: Enterprise graph database with ACID transactions
@@ -767,6 +768,101 @@ memory.close()
    • Relationships: 28
    • Communities: 3
 ```
+
+### Multi-Modal Context Engineering
+
+GraphMem can process various data modalities and extract knowledge from them:
+
+```python
+from graphmem.context.multimodal import MultiModalProcessor, MultiModalInput
+from graphmem.llm.providers import LLMProvider
+
+# Initialize with LLM for vision capabilities
+llm = LLMProvider(
+    provider="openai_compatible",
+    api_key="sk-or-v1-...",
+    api_base="https://openrouter.ai/api/v1",
+    model="google/gemini-2.0-flash-001",
+)
+
+processor = MultiModalProcessor(llm=llm, chunk_size=500)
+
+# Process JSON data
+json_result = processor.process(MultiModalInput(
+    content='{"company": "Tesla", "ceo": "Elon Musk", "founded": 2003}',
+    modality="json",
+))
+print(json_result.raw_text)
+# Output: company: Tesla
+#         ceo: Elon Musk
+#         founded: 2003
+
+# Process CSV data
+csv_result = processor.process(MultiModalInput(
+    content="name,role,company\nElon Musk,CEO,Tesla\nGwynne Shotwell,President,SpaceX",
+    modality="csv",
+))
+print(csv_result.raw_text)
+# Output: Row 1: name: Elon Musk, role: CEO, company: Tesla
+#         Row 2: name: Gwynne Shotwell, role: President, company: SpaceX
+
+# Process Markdown
+md_result = processor.process(MultiModalInput(
+    content="# Tesla\n## Mission\nAccelerate sustainable energy\n## CEO\nElon Musk",
+    modality="markdown",
+))
+print(f"Chunks: {len(md_result.chunks)}")  # Chunks by headers
+
+# Process source code
+code_result = processor.process(MultiModalInput(
+    content="def hello():\n    print('Hello GraphMem!')",
+    modality="code",
+    source_uri="example.py",
+))
+print(f"Language: {code_result.chunks[0].metadata['language']}")  # python
+
+# Process web pages (requires beautifulsoup4)
+html_result = processor.process(MultiModalInput(
+    content="<html><body><h1>Tesla</h1><p>Electric vehicles</p></body></html>",
+    modality="webpage",
+))
+```
+
+**Tested Output:**
+```
+📋 Text Processing
+✅ Text processed: 1 chunks
+
+📋 Markdown Processing  
+✅ Markdown processed: 4 chunks (by headers)
+
+📋 JSON Processing
+✅ JSON processed: 1 chunks
+   Extracted: company: Tesla, ceo: Elon Musk, founded: 2003
+
+📋 CSV Processing
+✅ CSV processed: 1 chunks
+   Row 1: name: Elon Musk, role: CEO, company: Tesla
+   Row 2: name: Gwynne Shotwell, role: President, company: SpaceX
+
+📋 Code Processing
+✅ Code processed: 1 chunks
+   Language: python
+```
+
+**Supported Modalities:**
+
+| Modality | Description | Dependencies |
+|----------|-------------|--------------|
+| `text` | Plain text | None |
+| `markdown` | Markdown documents | None |
+| `json` | Structured JSON | None |
+| `csv` | Tabular data | None |
+| `code` | Source code (Python, JS, TS) | None |
+| `webpage` | HTML web pages | `beautifulsoup4` |
+| `pdf` | PDF documents | `PyMuPDF` or `PyPDF2` |
+| `image` | Images (vision analysis) | Vision LLM |
+| `audio` | Audio transcription | `openai-whisper` |
 
 ## 🔧 Configuration Options
 
