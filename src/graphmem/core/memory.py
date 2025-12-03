@@ -17,9 +17,9 @@ Example:
     >>> # Initialize with defaults
     >>> memory = GraphMem()
     >>> 
-    >>> # Or with custom configuration
+    >>> # Or with custom configuration (Neo4j is optional)
     >>> config = MemoryConfig(
-    ...     neo4j_uri="bolt://localhost:7687",
+    ...     neo4j_uri="neo4j+s://your-instance.neo4j.io",  # Optional - uses in-memory if not set
     ...     evolution_enabled=True,
     ...     consolidation_threshold=0.8,
     ... )
@@ -84,10 +84,10 @@ class MemoryConfig:
     Override as needed for your specific deployment.
     """
     
-    # Storage backends
-    neo4j_uri: str = field(default_factory=lambda: os.getenv("GRAPHMEM_NEO4J_URI", "bolt://localhost:7687"))
+    # Storage backends (None = use in-memory storage)
+    neo4j_uri: Optional[str] = field(default_factory=lambda: os.getenv("GRAPHMEM_NEO4J_URI", None))
     neo4j_username: str = field(default_factory=lambda: os.getenv("GRAPHMEM_NEO4J_USERNAME", "neo4j"))
-    neo4j_password: str = field(default_factory=lambda: os.getenv("GRAPHMEM_NEO4J_PASSWORD", "password"))
+    neo4j_password: Optional[str] = field(default_factory=lambda: os.getenv("GRAPHMEM_NEO4J_PASSWORD", None))
     neo4j_database: str = field(default_factory=lambda: os.getenv("GRAPHMEM_NEO4J_DATABASE", "neo4j"))
     
     redis_url: Optional[str] = field(default_factory=lambda: os.getenv("GRAPHMEM_REDIS_URL"))
@@ -154,11 +154,7 @@ class MemoryConfig:
     
     def validate(self) -> None:
         """Validate configuration and raise ConfigurationError if invalid."""
-        if not self.neo4j_uri:
-            raise ConfigurationError(
-                "Neo4j URI is required",
-                config_key="neo4j_uri",
-            )
+        # neo4j_uri is optional - if not provided, in-memory storage is used
         
         if not self.llm_api_key:
             raise ConfigurationError(
