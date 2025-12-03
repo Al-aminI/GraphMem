@@ -322,11 +322,8 @@ class GraphMem:
         )
         
         # Initialize storage (Neo4j if configured, otherwise in-memory)
-        use_neo4j = (
-            self.config.neo4j_uri and 
-            self.config.neo4j_uri != "bolt://localhost:7687" and
-            "localhost" not in self.config.neo4j_uri
-        )
+        # Use Neo4j if any neo4j_uri is provided (including localhost)
+        use_neo4j = bool(self.config.neo4j_uri)
         
         if use_neo4j:
             try:

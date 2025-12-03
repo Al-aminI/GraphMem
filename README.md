@@ -620,6 +620,77 @@ if importance < 0.1:
 # Achieves 80% memory reduction on redundant content
 ```
 
+### With Neo4j Cloud Persistence
+
+```python
+from graphmem import GraphMem, MemoryConfig
+
+config = MemoryConfig(
+    # LLM (OpenRouter, OpenAI, Azure, etc.)
+    llm_provider="openai_compatible",
+    llm_api_key="sk-or-v1-your-key",
+    llm_api_base="https://openrouter.ai/api/v1",
+    llm_model="google/gemini-2.0-flash-001",
+    
+    embedding_provider="openai_compatible",
+    embedding_api_key="sk-or-v1-your-key",
+    embedding_api_base="https://openrouter.ai/api/v1",
+    embedding_model="openai/text-embedding-3-small",
+    
+    # Neo4j Cloud for persistence
+    neo4j_uri="neo4j+ssc://your-instance.databases.neo4j.io",
+    neo4j_username="neo4j",
+    neo4j_password="your-password",
+)
+
+memory = GraphMem(config)
+
+# Ingest documents
+memory.ingest("Tesla is led by CEO Elon Musk...")
+memory.ingest("SpaceX, also led by Elon Musk, builds rockets...")
+
+# Query
+response = memory.query("What companies does Elon Musk lead?")
+print(response.answer)  # "Elon Musk leads SpaceX and Tesla, Inc."
+
+# Evolve memory
+memory.evolve()
+
+# Save & close
+memory.save()
+memory.close()
+
+# Later - reload from Neo4j with same memory_id
+memory2 = GraphMem(config, memory_id="your-memory-id")
+response = memory2.query("What is Tesla's mission?")
+print(response.answer)  # "Tesla's mission is to accelerate the transition to sustainable energy."
+```
+
+**Tested Output:**
+```
+📄 Ingesting Tesla document...
+   → 8 entities, 7 relationships
+
+📄 Ingesting SpaceX document...
+   → 14 entities, 12 relationships
+
+❓ What companies does Elon Musk lead?
+💡 Elon Musk leads SpaceX and Tesla, Inc.
+
+❓ What is SpaceX's mission?
+💡 SpaceX aims to make humanity multiplanetary.
+
+🔄 11 evolution events
+
+✅ Memory reloaded from Neo4j Cloud:
+   • Entities: 21
+   • Relationships: 22
+   • Communities: 4
+
+❓ What is Tesla's mission?
+💡 Tesla's core mission is to accelerate the global transition to sustainable energy.
+```
+
 ## 🔧 Configuration Options
 
 | Option | Description | Default |
