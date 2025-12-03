@@ -96,11 +96,16 @@ class QueryEngine:
             )
         
         # Generate answers from communities
+        # IMPORTANT: Pass ALL nodes and edges from memory for cross-cluster visibility
+        # This ensures communities can see entities connected to them even if not in the same cluster
+        all_nodes = list(memory.nodes.values()) if memory.nodes else nodes
+        all_edges = list(memory.edges.values()) if memory.edges else edges
+        
         community_answers = self._query_communities(
             query=query.query,
             clusters=clusters,
-            nodes=nodes,
-            edges=edges,
+            nodes=all_nodes,
+            edges=all_edges,
         )
         
         # Aggregate answers

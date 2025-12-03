@@ -76,6 +76,10 @@ from graphmem.retrieval.semantic_search import SemanticSearch
 from graphmem.context.context_engine import ContextEngine
 from graphmem.context.chunker import DocumentChunker
 from graphmem.context.multimodal import MultiModalProcessor
+from graphmem.context.extractors import (
+    extract_webpage,
+    check_webpage_url,
+)
 
 # LLM providers
 from graphmem.llm.providers import LLMProvider
@@ -126,6 +130,9 @@ __all__ = [
     "ContextEngine",
     "DocumentChunker",
     "MultiModalProcessor",
+    # Extractors (text/webpage only)
+    "extract_webpage",
+    "check_webpage_url",
     # LLM
     "LLMProvider",
     "EmbeddingProvider",

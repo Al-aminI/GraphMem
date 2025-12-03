@@ -22,31 +22,49 @@ logger = logging.getLogger(__name__)
 EXTRACTION_PROMPT = """
 -Goal-
 Given a text document, exhaustively identify every entity and relationship.
-Extract as many unique knowledge triplets as the text supports.
-Treat {max_triplets} as a minimum target - continue extracting beyond it when more are available.
+Extract ALL knowledge - every person, organization, location, product, concept, date, and their connections.
+Target at least {max_triplets} triplets but extract MORE if available.
 
--Steps-
-1. Identify EVERY entity mentioned. For each entity, capture:
-   - entity_name: Canonical, capitalized name
-   - entity_type: Specific type (person, organization, location, event, concept, product, etc.)
-   - entity_description: Comprehensive description with ALL facts, attributes, roles, timelines, and quantitative values
+-Entity Types to Extract-
+• PERSON: Names, titles, roles (CEO, founder, engineer, etc.)
+• ORGANIZATION: Companies, institutions, teams, groups
+• PRODUCT: Products, models, services, technologies
+• LOCATION: Cities, countries, headquarters, addresses
+• DATE/TIME: Years, dates, time periods, founding dates
+• CONCEPT: Missions, goals, ideas, industries
+• EVENT: Launches, announcements, milestones
 
-Format: ("entity"$$$$<name>$$$$<type>$$$$<description>)
+-Relationship Types to Extract-
+• Leadership: "is CEO of", "leads", "founded", "manages", "directs"
+• Affiliation: "works at", "employed by", "member of", "part of"
+• Creation: "produces", "manufactures", "develops", "designs", "created"
+• Location: "headquartered in", "located in", "based in", "operates in"
+• Temporal: "founded in", "established", "started in", "since"
+• Goal/Purpose: "aims to", "mission is", "goal is", "focuses on"
+• Ownership: "owns", "acquired", "subsidiary of", "parent of"
 
-2. Identify EVERY relationship (explicit or implicit). For each:
-   - source_entity: Name of source entity
-   - target_entity: Name of target entity  
-   - relation: Short, precise verb phrase
-   - relationship_description: Exhaustive explanation with causes, effects, timelines, quantities
+-Critical Instructions-
+1. ALWAYS extract the relationship between a PERSON and ORGANIZATION for roles (CEO, founder, etc.)
+2. ALWAYS extract products/services that organizations produce
+3. ALWAYS extract founding dates and locations
+4. Extract BOTH directions when relevant (e.g., "Elon Musk is CEO of Tesla" AND "Tesla has CEO Elon Musk")
+5. Include descriptive details in entity descriptions
 
-Format: ("relationship"$$$$<source>$$$$<target>$$$$<relation>$$$$<description>)
+-Format-
+Entity: ("entity"$$$$<name>$$$$<type>$$$$<description>)
+Relationship: ("relationship"$$$$<source>$$$$<target>$$$$<relation>$$$$<description>)
 
-3. Continue until no further distinct entities or relationships remain.
+-Examples-
+("entity"$$$$Tesla, Inc.$$$$Organization$$$$American electric vehicle company headquartered in Austin, Texas, founded in 2003)
+("entity"$$$$Elon Musk$$$$Person$$$$CEO of Tesla, Inc. and founder of SpaceX)
+("relationship"$$$$Elon Musk$$$$Tesla, Inc.$$$$is CEO of$$$$Elon Musk serves as the Chief Executive Officer of Tesla, Inc.)
+("relationship"$$$$Tesla, Inc.$$$$Model S$$$$produces$$$$Tesla manufactures the Model S electric vehicle)
+("relationship"$$$$Tesla, Inc.$$$$2003$$$$founded in$$$$Tesla, Inc. was founded in 2003)
 
 -Text-
 {text}
 
--Output-
+-Output (extract ALL entities and relationships)-
 """
 
 
@@ -298,12 +316,23 @@ class KnowledgeGraph:
     ) -> Tuple[List[MemoryNode], List[MemoryEdge]]:
         """Fallback extraction with simpler prompt."""
         try:
-            prompt = f"""Extract key entities and relationships from this text.
+            prompt = f"""Extract ALL entities and relationships from this text.
+
+IMPORTANT: 
+- Extract EVERY person, organization, product, location, date mentioned
+- Extract relationships like "is CEO of", "founded", "produces", "located in"
+- For roles (CEO, founder), ALWAYS create a relationship between the person and organization
             
 Text: {chunk}
 
-List entities as: ENTITY: name | type | description
-List relationships as: RELATIONSHIP: source -> relation -> target | description"""
+Format your response EXACTLY like this:
+ENTITY: name | type | description
+RELATIONSHIP: source -> relation -> target | description
+
+Example:
+ENTITY: Elon Musk | Person | CEO of Tesla
+ENTITY: Tesla | Organization | Electric vehicle company
+RELATIONSHIP: Elon Musk -> is CEO of -> Tesla | Elon Musk serves as CEO"""
             
             response = self.llm.complete(prompt)
             

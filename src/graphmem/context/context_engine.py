@@ -418,4 +418,20 @@ Summary:"""
         except Exception as e:
             logger.error(f"Context summarization failed: {e}")
             return context.content[:max_length]
+    
+    def extract_from_url(self, url: str) -> str:
+        """
+        Extract content from a URL (webpage).
+        
+        Args:
+            url: URL to extract content from
+        
+        Returns:
+            Extracted text content
+        
+        Example:
+            >>> text = engine.extract_from_url("https://example.com/article")
+        """
+        from graphmem.context.extractors import extract_webpage
+        return extract_webpage(url)
 

@@ -117,7 +117,7 @@ While benchmarks on small datasets may show similar performance, **GraphMem's tr
 - **Relevance-Weighted Assembly**: 53% better context relevance
 - **Token Optimization**: 99% reduction through targeted retrieval
 - **Multi-source Synthesis**: Cross-document fact extraction
-- **Multi-Modal Processing**: Text, Markdown, JSON, CSV, Code, Web, PDF, Images, Audio
+- **Multi-Modal Processing**: Text, Markdown, JSON, CSV, Code, Web
 
 ### 🚀 Production Ready
 - **Neo4j Backend**: Enterprise graph database with ACID transactions + native vector index
@@ -651,7 +651,7 @@ graphmem/
 ├── context/
 │   ├── context_engine.py  # Context assembly
 │   ├── chunker.py         # Semantic chunking
-│   └── multimodal.py      # PDF, image, audio
+│   └── multimodal.py      # Multi-modal processing
 │
 ├── llm/
 │   ├── providers.py       # LLMProvider (Azure, OpenAI, Anthropic)
@@ -996,9 +996,6 @@ html_result = processor.process(MultiModalInput(
 | `csv` | Tabular data | None |
 | `code` | Source code (Python, JS, TS) | None |
 | `webpage` | HTML web pages | `beautifulsoup4` |
-| `pdf` | PDF documents | `PyMuPDF` or `PyPDF2` |
-| `image` | Images (vision analysis) | Vision LLM |
-| `audio` | Audio transcription | `openai-whisper` |
 
 ## 🔧 Configuration Options
 
@@ -1193,7 +1190,6 @@ config = MemoryConfig(
 ### Optional
 - **Graph Storage**: `neo4j` - Persistent graph database
 - **Caching**: `redis` - High-performance cache (3x embedding speedup)
-- **PDF**: `PyMuPDF` or `PyPDF2` - PDF processing
 - **Network**: `networkx` - Community detection algorithms
 - **Web Scraping**: `beautifulsoup4`, `requests` - Webpage processing
 
