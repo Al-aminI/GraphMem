@@ -79,5 +79,5 @@ dmypy.json
 Thumbs.db
 
 # Paper (not for distribution)
-paper/
-PAPER.md
+# paper/
+# PAPER.md

@@ -2,7 +2,7 @@
 GraphMem version information.
 """
 
-__version__ = "1.4.5"
+__version__ = "1.4.6"
 __version_info__ = tuple(int(x) for x in __version__.split("."))
 
 # Build metadata
