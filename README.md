@@ -228,6 +228,59 @@ response = llm.complete("What is the capital of France?")
 print(response)
 ```
 
+### Using Different Embedding Providers
+
+GraphMem embeddings also support any OpenAI-compatible API:
+
+```python
+from graphmem.llm.embeddings import EmbeddingProvider, openrouter_embeddings
+
+# OpenAI
+embeddings = EmbeddingProvider(
+    provider="openai",
+    api_key="sk-...",
+    model="text-embedding-3-small",
+)
+
+# Azure OpenAI
+embeddings = EmbeddingProvider(
+    provider="azure_openai",
+    api_key="...",
+    api_base="https://your-resource.openai.azure.com/",
+    deployment="text-embedding-3-small",
+)
+
+# OpenRouter (access OpenAI embeddings via OpenRouter)
+embeddings = EmbeddingProvider(
+    provider="openai_compatible",
+    api_key="sk-or-v1-...",
+    api_base="https://openrouter.ai/api/v1",
+    model="openai/text-embedding-3-small",
+)
+
+# Convenience function
+embeddings = openrouter_embeddings(
+    api_key="sk-or-v1-...",
+    model="openai/text-embedding-3-small",
+)
+
+# Local (sentence-transformers, offline)
+embeddings = EmbeddingProvider(
+    provider="local",
+    model="all-MiniLM-L6-v2",
+)
+
+# Generate embeddings
+vec = embeddings.embed_text("Hello world")
+print(f"Embedding dimensions: {len(vec)}")  # 1536 for text-embedding-3-small
+
+# Batch embeddings
+vecs = embeddings.embed_batch(["Apple", "Google", "Microsoft"])
+
+# Similarity calculation
+sim = embeddings.cosine_similarity(vec1, vec2)
+```
+
 ### LLM-Based Knowledge Extraction
 
 ```python
@@ -398,8 +451,8 @@ if importance < 0.1:
 
 ### Supported LLM Providers
 
-| Provider | `llm_provider` | `api_base` |
-|----------|----------------|------------|
+| Provider | `provider` | `api_base` |
+|----------|------------|------------|
 | OpenAI | `openai` | (default) |
 | Azure OpenAI | `azure_openai` | Your Azure endpoint |
 | OpenRouter | `openai_compatible` | `https://openrouter.ai/api/v1` |
@@ -410,6 +463,16 @@ if importance < 0.1:
 | DeepInfra | `openai_compatible` | `https://api.deepinfra.com/v1/openai` |
 | Anthropic | `anthropic` | (default) |
 | Ollama | `ollama` | `http://localhost:11434` |
+
+### Supported Embedding Providers
+
+| Provider | `provider` | `api_base` | Example Model |
+|----------|------------|------------|---------------|
+| OpenAI | `openai` | (default) | `text-embedding-3-small` |
+| Azure OpenAI | `azure_openai` | Your Azure endpoint | deployment name |
+| OpenRouter | `openai_compatible` | `https://openrouter.ai/api/v1` | `openai/text-embedding-3-small` |
+| Together AI | `openai_compatible` | `https://api.together.xyz/v1` | `togethercomputer/m2-bert-80M-8k-retrieval` |
+| Local | `local` | N/A | `all-MiniLM-L6-v2` |
 
 ## 🧪 Running Evaluations
 

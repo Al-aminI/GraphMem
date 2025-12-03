@@ -2,6 +2,14 @@
 GraphMem Embedding Providers
 
 Abstraction layer for embedding generation supporting multiple providers.
+
+Supports:
+- OpenAI
+- Azure OpenAI
+- OpenRouter (via OpenAI-compatible API)
+- Together AI (via OpenAI-compatible API)
+- Any OpenAI-compatible embedding API
+- Local models (sentence-transformers)
 """
 
 from __future__ import annotations
@@ -17,12 +25,51 @@ logger = logging.getLogger(__name__)
 
 class EmbeddingProvider:
     """
-    Multi-provider embedding abstraction.
+    Multi-provider embedding abstraction supporting any OpenAI-compatible API.
     
-    Supports:
-    - Azure OpenAI
-    - OpenAI
-    - Local models (sentence-transformers)
+    Supported Providers:
+    - azure_openai: Azure OpenAI Service
+    - openai: OpenAI API
+    - openai_compatible: Any OpenAI-compatible API (OpenRouter, Together, etc.)
+    - local: Local sentence-transformers models
+    
+    Examples:
+        # OpenAI
+        embeddings = EmbeddingProvider(
+            provider="openai",
+            api_key="sk-...",
+            model="text-embedding-3-small"
+        )
+        
+        # Azure OpenAI
+        embeddings = EmbeddingProvider(
+            provider="azure_openai",
+            api_key="...",
+            api_base="https://your-resource.openai.azure.com/",
+            deployment="text-embedding-3-small"
+        )
+        
+        # OpenRouter
+        embeddings = EmbeddingProvider(
+            provider="openai_compatible",
+            api_key="sk-or-v1-...",
+            api_base="https://openrouter.ai/api/v1",
+            model="openai/text-embedding-3-small"
+        )
+        
+        # Together AI
+        embeddings = EmbeddingProvider(
+            provider="openai_compatible",
+            api_key="...",
+            api_base="https://api.together.xyz/v1",
+            model="togethercomputer/m2-bert-80M-8k-retrieval"
+        )
+        
+        # Local (sentence-transformers)
+        embeddings = EmbeddingProvider(
+            provider="local",
+            model="all-MiniLM-L6-v2"
+        )
     """
     
     def __init__(
@@ -40,12 +87,12 @@ class EmbeddingProvider:
         Initialize embedding provider.
         
         Args:
-            provider: Provider name
+            provider: Provider name (azure_openai, openai, openai_compatible, local)
             api_key: API key
-            api_base: API base URL
-            api_version: API version (Azure)
+            api_base: API base URL (required for openai_compatible)
+            api_version: API version (Azure only)
             model: Model name
-            deployment: Deployment name (Azure)
+            deployment: Deployment name (Azure only)
             cache: Optional cache for embeddings
         """
         self.provider = provider.lower()
@@ -67,10 +114,15 @@ class EmbeddingProvider:
             self._init_azure_openai()
         elif self.provider == "openai":
             self._init_openai()
+        elif self.provider == "openai_compatible":
+            self._init_openai_compatible()
         elif self.provider == "local":
             self._init_local()
         else:
-            raise ValueError(f"Unsupported embedding provider: {self.provider}")
+            raise ValueError(
+                f"Unsupported embedding provider: {self.provider}. "
+                f"Supported: azure_openai, openai, openai_compatible, local"
+            )
     
     def _init_azure_openai(self):
         """Initialize Azure OpenAI client."""
@@ -94,8 +146,45 @@ class EmbeddingProvider:
             
             self._client = OpenAI(
                 api_key=self.api_key or os.getenv("OPENAI_API_KEY"),
+                base_url=self.api_base,  # None uses default
             )
             self.model = self.model or "text-embedding-3-small"
+            
+        except ImportError:
+            raise ImportError("openai package required: pip install openai")
+    
+    def _init_openai_compatible(self):
+        """
+        Initialize OpenAI-compatible client for third-party providers.
+        
+        Works with:
+        - OpenRouter: https://openrouter.ai/api/v1
+        - Together AI: https://api.together.xyz/v1
+        - Anyscale: https://api.endpoints.anyscale.com/v1
+        - And any other OpenAI-compatible embedding endpoint
+        """
+        try:
+            from openai import OpenAI
+            
+            if not self.api_base:
+                raise ValueError(
+                    "api_base is required for openai_compatible provider. "
+                    "Example: api_base='https://openrouter.ai/api/v1'"
+                )
+            
+            if not self.api_key:
+                raise ValueError("api_key is required for openai_compatible provider")
+            
+            self._client = OpenAI(
+                api_key=self.api_key,
+                base_url=self.api_base,
+            )
+            
+            if not self.model:
+                raise ValueError(
+                    "model is required for openai_compatible provider. "
+                    "Example: model='openai/text-embedding-3-small'"
+                )
             
         except ImportError:
             raise ImportError("openai package required: pip install openai")
@@ -226,16 +315,35 @@ def get_embedding_provider(
     Factory function to create an embedding provider.
     
     Args:
-        provider: Provider name (azure_openai, openai, local)
+        provider: Provider name:
+            - "openai": OpenAI API
+            - "azure_openai": Azure OpenAI Service
+            - "openai_compatible": Any OpenAI-compatible API
+            - "local": Local sentence-transformers
         api_key: API key
-        api_base: API base URL
-        api_version: API version (Azure)
+        api_base: API base URL (required for openai_compatible)
+        api_version: API version (Azure only)
         model: Model name
-        deployment: Deployment name (Azure)
+        deployment: Deployment name (Azure only)
         cache: Optional cache for embeddings
     
     Returns:
         Configured EmbeddingProvider instance
+    
+    Examples:
+        # OpenAI
+        emb = get_embedding_provider("openai", api_key="sk-...")
+        
+        # OpenRouter
+        emb = get_embedding_provider(
+            "openai_compatible",
+            api_key="sk-or-v1-...",
+            api_base="https://openrouter.ai/api/v1",
+            model="openai/text-embedding-3-small"
+        )
+        
+        # Local
+        emb = get_embedding_provider("local", model="all-MiniLM-L6-v2")
     """
     return EmbeddingProvider(
         provider=provider,
@@ -246,4 +354,25 @@ def get_embedding_provider(
         deployment=deployment,
         cache=cache,
         **kwargs,
+    )
+
+
+# Convenience functions for common providers
+def openrouter_embeddings(api_key: str, model: str = "openai/text-embedding-3-small") -> EmbeddingProvider:
+    """Create an OpenRouter embedding provider."""
+    return EmbeddingProvider(
+        provider="openai_compatible",
+        api_key=api_key,
+        api_base="https://openrouter.ai/api/v1",
+        model=model,
+    )
+
+
+def together_embeddings(api_key: str, model: str = "togethercomputer/m2-bert-80M-8k-retrieval") -> EmbeddingProvider:
+    """Create a Together AI embedding provider."""
+    return EmbeddingProvider(
+        provider="openai_compatible",
+        api_key=api_key,
+        api_base="https://api.together.xyz/v1",
+        model=model,
     )
