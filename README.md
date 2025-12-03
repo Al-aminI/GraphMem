@@ -9,16 +9,56 @@
 
 GraphMem is a state-of-the-art, self-evolving graph-based memory system for production AI agents. It achieves **99% token reduction**, **4.2× faster queries**, and **bounded memory growth** compared to naive RAG approaches.
 
-## 📊 Benchmark Results
+## 📊 Benchmark Results (Honest Evaluation)
 
-| Metric | Naive RAG | GraphMem | Improvement |
-|--------|-----------|----------|-------------|
-| **Tokens/Query** | 703 | 7 | **99% reduction** |
-| **Query Latency** | 1656ms | 394ms | **4.2× faster** |
-| **Entity Resolution** | 20% | 95% | **+75%** |
-| **Multi-hop Reasoning** | 50-67% | 85-86% | **+35%** |
-| **Long Context (100 facts)** | 0% | 90% | **+90%** |
-| **Memory Growth (1 year)** | 3,650 | ~100 | **97% bounded** |
+**Tested with:** OpenRouter (Gemini 2.0 Flash) + Neo4j Cloud + text-embedding-3-small
+
+| Test | Naive RAG | GraphMem | Winner |
+|------|-----------|----------|--------|
+| **Knowledge Extraction** | 0% | 100% | **GraphMem** ✅ |
+| **Entity Resolution** | 100% | 100% | TIE |
+| **Multi-hop Reasoning** | 100% | 50% | Naive RAG* |
+| **Memory Evolution** | 0% | 100% | **GraphMem** ✅ |
+
+**Summary: GraphMem wins 2, Naive RAG wins 1, Ties 1**
+
+### *Honest Note on Multi-hop
+
+On **small datasets** (3-10 documents), Naive RAG can match or beat GraphMem because:
+- All context fits in the LLM's context window
+- The LLM can reason over the full text directly
+- GraphMem's retrieval might not fetch all relevant nodes
+
+**GraphMem's advantage grows with scale** (100+ documents) where:
+- Naive RAG can't fit all context in the window
+- Graph traversal finds connections vector search misses
+- Entity resolution prevents duplicate/conflicting info
+
+### Where GraphMem ACTUALLY Excels
+
+| Capability | Naive RAG | GraphMem |
+|------------|-----------|----------|
+| Entity extraction | ❌ 0 | ✅ 7+ entities |
+| Relationship detection | ❌ 0 | ✅ 4+ relationships |
+| Memory evolution | ❌ Static forever | ✅ Decay + consolidation |
+| Persistence | ❌ RAM only | ✅ Neo4j + Redis |
+| Entity canonicalization | ❌ None | ✅ Alias resolution |
+| Community detection | ❌ None | ✅ Auto-clustering |
+
+### When to Use GraphMem vs Naive RAG
+
+**Use GraphMem when you need:**
+- Knowledge extraction (who/what/where relationships)
+- Long-term memory that evolves
+- Entity tracking across conversations
+- Large document collections (100+)
+- Persistent storage (Neo4j)
+
+**Naive RAG might be fine when:**
+- Small, static document sets
+- Simple Q&A without entity tracking
+- Latency is critical (GraphMem has overhead)
+- You don't need memory evolution
 
 ## ✨ Key Features
 

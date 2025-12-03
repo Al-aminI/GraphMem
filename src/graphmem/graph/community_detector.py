@@ -171,23 +171,41 @@ class CommunityDetector:
         """Run community detection algorithm."""
         import networkx as nx
         
+        # Check for empty or too small graphs
         if len(G.nodes()) == 0:
             return []
         
+        if len(G.nodes()) == 1:
+            # Single node = single community
+            return [set(G.nodes())]
+        
+        if len(G.edges()) == 0:
+            # No edges - each node is its own community
+            return [set([n]) for n in G.nodes()]
+        
         try:
             if self.algorithm == "greedy_modularity":
+                # greedy_modularity needs at least 2 nodes and 1 edge
+                if len(G.nodes()) < 2 or len(G.edges()) < 1:
+                    return [set(G.nodes())]
                 communities = list(nx.community.greedy_modularity_communities(G))
             elif self.algorithm == "louvain":
                 try:
                     communities_dict = nx.community.louvain_communities(G)
                     communities = list(communities_dict)
-                except AttributeError:
-                    # Fallback if louvain not available
-                    communities = list(nx.community.greedy_modularity_communities(G))
+                except (AttributeError, ZeroDivisionError):
+                    # Fallback if louvain not available or fails
+                    if len(G.edges()) > 0:
+                        communities = list(nx.community.greedy_modularity_communities(G))
+                    else:
+                        communities = [set(G.nodes())]
             elif self.algorithm == "label_propagation":
                 communities = list(nx.community.label_propagation_communities(G))
             else:
-                communities = list(nx.community.greedy_modularity_communities(G))
+                if len(G.edges()) > 0:
+                    communities = list(nx.community.greedy_modularity_communities(G))
+                else:
+                    communities = [set(G.nodes())]
             
             # Split large communities
             result = []
@@ -202,8 +220,15 @@ class CommunityDetector:
             
             return result
             
+        except ZeroDivisionError:
+            # NetworkX division by zero in modularity calculation
+            logger.warning("Division by zero in community detection, returning all nodes as one community")
+            return [set(G.nodes())]
         except Exception as e:
             logger.error(f"Community detection failed: {e}")
+            # Return all nodes as single community as fallback
+            if len(G.nodes()) > 0:
+                return [set(G.nodes())]
             return []
     
     def _generate_summary(
