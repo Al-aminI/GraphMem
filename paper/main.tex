@@ -81,7 +81,7 @@
 
 \author{
   \textbf{Al-Amin Ibrahim} \\
-  Independent AI Research \\
+  AmeerAI Research | DaaliTech \\
   \texttt{github.com/Al-aminI/GraphMem} \\
   \texttt{pip install agentic-graph-mem}
 }
@@ -241,20 +241,20 @@ In production deployments, token usage $T(\calM)$ directly impacts API costs (ap
 \node[component, right=of resolve] (graph) {Graph\\Construction};
 
 % Evolution Layer
-\node[component, below=0.8cm of extract] (importance) {Importance\\Scoring};
-\node[component, below=0.8cm of resolve] (decay) {Memory\\Decay};
-\node[component, below=0.8cm of graph] (consolidate) {LLM\\Consolidation};
+\node[component, below=0.8cm of graph] (importance) {Importance\\Scoring};
+\node[component, below=0.8cm of importance] (decay) {Memory\\Decay};
+\node[component, below=0.8cm of decay] (consolidate) {LLM\\Consolidation};
 
 % Retrieval Layer
-\node[component, below=0.8cm of decay] (retrieval) {Hybrid Retrieval};
+\node[component, below=0.8cm of consolidate] (retrieval) {Hybrid Retrieval};
 
 % Storage Layer
-\node[storage, below=0.8cm of importance] (neo4j) {Neo4j\\(Graph DB)};
-\node[storage, below=0.8cm of decay, yshift=-0.8cm] (redis) {Redis\\(Cache)};
-\node[storage, below=0.8cm of consolidate] (embed) {Embeddings\\(Vector)};
+\node[storage, left=1.1cm of importance] (neo4j) {Neo4j\\(Graph DB)};
+\node[storage, left=1.1cm of decay] (redis) {Redis\\(Cache)};
+\node[storage, left=1.1cm of consolidate] (embed) {Embeddings\\(Vector)};
 
 % Output
-\node[process, right=of retrieval] (output) {Context\\Assembly};
+\node[process, right=3.5cm of retrieval] (output) {Context\\Assembly};
 \node[process, right=of output] (llm) {LLM\\Query};
 
 % Arrows - Main flow
@@ -281,9 +281,29 @@ In production deployments, token usage $T(\calM)$ directly impacts API costs (ap
 
 % Background boxes
 \begin{scope}[on background layer]
-    \node[draw=gray!50, dashed, rounded corners=5pt, fill=blue!5, fit=(extract)(resolve)(graph), inner sep=0.2cm, label={[font=\scriptsize\sffamily]above:Ingest Pipeline}] {};
-    \node[draw=gray!50, dashed, rounded corners=5pt, fill=orange!5, fit=(importance)(decay)(consolidate), inner sep=0.2cm, label={[font=\scriptsize\sffamily]left:Evolution}] {};
-    \node[draw=gray!50, dashed, rounded corners=5pt, fill=green!5, fit=(neo4j)(redis)(embed), inner sep=0.2cm, label={[font=\scriptsize\sffamily]below:Storage}] {};
+    % Ingest Pipeline: input + top processing
+    \node[draw=gray!50, dashed, rounded corners=5pt, fill=blue!5,
+          fit=(input)(extract)(resolve)(graph),
+          inner sep=0.2cm,
+          label={[font=\scriptsize\sffamily]above:Ingest Pipeline}] {};
+
+    % Evolution: vertical chain under graph
+    \node[draw=gray!50, dashed, rounded corners=5pt, fill=orange!5,
+          fit=(importance)(decay)(consolidate),
+          inner sep=0.2cm,
+          label={[font=\scriptsize\sffamily]right:Evolution}] {};
+
+    % Storage: column of DBs to the left
+    \node[draw=gray!50, dashed, rounded corners=5pt, fill=green!5,
+          fit=(neo4j)(redis)(embed),
+          inner sep=0.2cm,
+          label={[font=\scriptsize\sffamily]left:Storage}] {};
+
+    % Retrieval / Output region (optional, if desired)
+    %\node[draw=gray!50, dashed, rounded corners=5pt, fill=purple!5,
+    %      fit=(retrieval)(output)(llm),
+    %      inner sep=0.3cm,
+    %      label={[font=\scriptsize\sffamily]below:Retrieval & Generation}] {};
 \end{scope}
 
 \end{tikzpicture}
@@ -540,7 +560,6 @@ We conducted comprehensive experiments comparing \graphmem{} against \naiverag{}
     \item Accuracy: Correctness on reasoning tasks
     \item Memory Growth: Active entities over time
 \end{itemize}
-
 \subsection{Token Efficiency Results}
 
 \begin{figure}[t]
@@ -557,7 +576,8 @@ We conducted comprehensive experiments comparing \graphmem{} against \naiverag{}
     x tick label style={font=\small},
     ymin=0,
     ymax=800,
-    bar width=30pt,
+    bar width=18pt,        % narrower bars
+    enlarge x limits=0.35, % add horizontal padding around bars
     nodes near coords,
     nodes near coords style={font=\footnotesize, above},
     every node near coord/.append style={yshift=3pt},
@@ -569,6 +589,7 @@ We conducted comprehensive experiments comparing \graphmem{} against \naiverag{}
 \addplot[fill=graphmem, draw=graphmem!80] coordinates {(GraphMem, 7)};
 \end{axis}
 \end{tikzpicture}
+
 \caption{Token usage comparison. \graphmem{} achieves \textbf{99.0\% reduction} in tokens per query (703 $\rightarrow$ 7), translating to significant cost savings at scale.}
 \label{fig:tokens}
 \end{figure}

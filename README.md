@@ -131,7 +131,11 @@ While benchmarks on small datasets may show similar performance, **GraphMem's tr
 ### Installation
 
 ```bash
+# Core package
 pip install agentic-graph-mem
+
+# Full installation (recommended)
+pip install "agentic-graph-mem[all]"
 ```
 
 ### Basic Usage - It's This Simple!
@@ -986,8 +990,8 @@ html_result = processor.process(MultiModalInput(
 ## 🧪 Running Evaluations
 
 ```bash
-# Install the package
-pip install agentic-graph-mem
+# Install the package (full installation)
+pip install "agentic-graph-mem[all]"
 
 # Run benchmarks
 cd graphmem/evaluation
