@@ -216,7 +216,7 @@ class Neo4jStore:
             self.ensure_vector_index(memory_id)
     
     def _save_edges_batch(self, memory_id: str, edges: List[MemoryEdge], batch_size: int = 500) -> None:
-        """Save edges in batches."""
+        """Save edges in batches with temporal validity support."""
         if not edges:
             return
         
@@ -234,6 +234,9 @@ class Neo4jStore:
                     "properties": json.dumps(e.properties),
                     "importance": e.importance.value,
                     "state": e.state.name,
+                    # Temporal validity interval [valid_from, valid_until]
+                    "valid_from": e.valid_from.isoformat() if e.valid_from else None,
+                    "valid_until": e.valid_until.isoformat() if e.valid_until else None,
                 }
                 for e in batch
             ]
@@ -251,7 +254,9 @@ class Neo4jStore:
                     r.properties = edge.properties,
                     r.importance = edge.importance,
                     r.state = edge.state,
-                    r.memory_id = $memory_id
+                    r.memory_id = $memory_id,
+                    r.valid_from = edge.valid_from,
+                    r.valid_until = edge.valid_until
                 """,
                 {"memory_id": memory_id, "edges": edge_data},
                 write=True,
@@ -376,8 +381,17 @@ class Neo4jStore:
         
         return nodes
     
-    def _load_edges(self, memory_id: str) -> List[MemoryEdge]:
-        """Load edges for a memory."""
+    def _load_edges(self, memory_id: str, valid_at: Optional[datetime] = None) -> List[MemoryEdge]:
+        """
+        Load edges for a memory with optional temporal filtering.
+        
+        Args:
+            memory_id: Memory ID to load edges for
+            valid_at: If provided, only return edges valid at this time
+        
+        Returns:
+            List of MemoryEdge objects
+        """
         result = self._execute_query(
             """
             MATCH (s:Entity {memory_id: $memory_id})-[r:RELATED {memory_id: $memory_id}]->(t:Entity {memory_id: $memory_id})
@@ -396,6 +410,20 @@ class Neo4jStore:
             
             from graphmem.core.memory_types import MemoryImportance, MemoryState
             
+            # Parse temporal validity fields
+            valid_from = None
+            valid_until = None
+            if r.get("valid_from"):
+                try:
+                    valid_from = datetime.fromisoformat(r["valid_from"])
+                except:
+                    pass
+            if r.get("valid_until"):
+                try:
+                    valid_until = datetime.fromisoformat(r["valid_until"])
+                except:
+                    pass
+            
             edge = MemoryEdge(
                 id=r["id"],
                 source_id=record["source_id"],
@@ -408,10 +436,106 @@ class Neo4jStore:
                 importance=MemoryImportance(r.get("importance", 5)),
                 state=MemoryState[r.get("state", "ACTIVE")],
                 memory_id=memory_id,
+                valid_from=valid_from,
+                valid_until=valid_until,
             )
+            
+            # Apply temporal filter if specified
+            if valid_at is not None:
+                if not edge.is_valid_at(valid_at):
+                    continue
+            
             edges.append(edge)
         
         return edges
+    
+    def query_edges_at_time(
+        self,
+        memory_id: str,
+        query_time: datetime,
+        source_id: Optional[str] = None,
+        target_id: Optional[str] = None,
+        relation_type: Optional[str] = None,
+    ) -> List[MemoryEdge]:
+        """
+        Query edges that were valid at a specific point in time.
+        
+        Implements temporal reasoning from the paper:
+        valid(r, t) = 1[t_s(r) <= t <= t_e(r)]
+        
+        Args:
+            memory_id: Memory to query
+            query_time: Point in time to query (e.g., datetime(2020, 6, 1))
+            source_id: Optional filter by source entity
+            target_id: Optional filter by target entity
+            relation_type: Optional filter by relationship type
+        
+        Returns:
+            List of edges valid at the specified time
+        
+        Example:
+            >>> # "Who was CEO in 2020?"
+            >>> ceo_edges = store.query_edges_at_time(
+            ...     memory_id="mem1",
+            ...     query_time=datetime(2020, 6, 1),
+            ...     relation_type="CEO_OF"
+            ... )
+        """
+        # Load all edges and filter by validity
+        all_edges = self._load_edges(memory_id, valid_at=query_time)
+        
+        # Apply additional filters
+        filtered = all_edges
+        
+        if source_id:
+            filtered = [e for e in filtered if e.source_id == source_id]
+        
+        if target_id:
+            filtered = [e for e in filtered if e.target_id == target_id]
+        
+        if relation_type:
+            filtered = [e for e in filtered if e.relation_type.lower() == relation_type.lower()]
+        
+        return filtered
+    
+    def supersede_relationship(
+        self,
+        memory_id: str,
+        edge_id: str,
+        end_time: Optional[datetime] = None,
+    ) -> bool:
+        """
+        Mark a relationship as superseded (no longer valid).
+        
+        Used when facts change, e.g., CEO transitions.
+        The old relationship is preserved for historical queries.
+        
+        Args:
+            memory_id: Memory containing the edge
+            edge_id: ID of edge to supersede
+            end_time: When the relationship ended (defaults to now)
+        
+        Returns:
+            True if successful
+        """
+        end_time = end_time or datetime.utcnow()
+        
+        result = self._execute_query(
+            """
+            MATCH ()-[r:RELATED {id: $edge_id, memory_id: $memory_id}]->()
+            SET r.valid_until = $end_time,
+                r.state = 'ARCHIVED'
+            RETURN r
+            """,
+            {
+                "memory_id": memory_id,
+                "edge_id": edge_id,
+                "end_time": end_time.isoformat(),
+            },
+            write=True,
+        )
+        
+        return len(result) > 0
     
     def _load_clusters(self, memory_id: str) -> List[MemoryCluster]:
         """Load clusters for a memory."""

@@ -3,6 +3,15 @@ GraphMem Importance Scorer
 
 Calculates and updates importance scores for memory elements.
 Higher importance = slower decay, higher retrieval priority.
+
+Implements the importance scoring formula from the paper:
+ρ(e) = w1·f1(e) + w2·f2(e) + w3·f3(e) + w4·f4(e)
+
+where:
+- f1 = Temporal recency (exponential decay)
+- f2 = Access frequency (logarithmic scaling)  
+- f3 = PageRank centrality (structural importance)
+- f4 = User feedback / explicit importance
 """
 
 from __future__ import annotations
@@ -23,39 +32,52 @@ logger = logging.getLogger(__name__)
 
 class ImportanceScorer:
     """
-    Scores memory elements based on various factors.
+    Scores memory elements based on multiple factors including PageRank.
     
-    Scoring Factors:
-    - Recency: How recently the memory was accessed
-    - Frequency: How often the memory is accessed
-    - Connectivity: How well-connected in the graph
-    - Semantic centrality: How central to core topics
-    - User signals: Explicit importance markers
+    Scoring Factors (per paper):
+    - f1: Temporal recency - Recent interactions indicate relevance
+    - f2: Access frequency - Frequently accessed = more valuable  
+    - f3: PageRank centrality - Well-connected entities are important
+    - f4: User signals - Explicit importance markers
+    
+    The formula is:
+    ρ(e) = w1·f1(e) + w2·f2(e) + w3·f3(e) + w4·f4(e)
     """
+    
+    # Cache for PageRank scores (recomputed periodically)
+    _pagerank_cache: Dict[str, float] = {}
+    _pagerank_cache_time: Optional[datetime] = None
+    _pagerank_cache_ttl: float = 300.0  # 5 minutes
     
     def __init__(
         self,
         recency_weight: float = 0.3,
-        frequency_weight: float = 0.25,
-        connectivity_weight: float = 0.2,
-        centrality_weight: float = 0.15,
-        user_weight: float = 0.1,
+        frequency_weight: float = 0.3,
+        pagerank_weight: float = 0.2,
+        user_weight: float = 0.2,
+        pagerank_damping: float = 0.85,
     ):
         """
-        Initialize scorer with weight configuration.
+        Initialize scorer with weight configuration matching paper.
         
         Args:
-            recency_weight: Weight for recency score
-            frequency_weight: Weight for access frequency
-            connectivity_weight: Weight for graph connectivity
-            centrality_weight: Weight for semantic centrality
-            user_weight: Weight for user-provided importance
+            recency_weight: w1 - Weight for recency score (default 0.3)
+            frequency_weight: w2 - Weight for access frequency (default 0.3)
+            pagerank_weight: w3 - Weight for PageRank centrality (default 0.2)
+            user_weight: w4 - Weight for user-provided importance (default 0.2)
+            pagerank_damping: Damping factor for PageRank (default 0.85)
+        
+        Note: Weights should sum to 1.0 as per paper Equation 7.
         """
         self.recency_weight = recency_weight
         self.frequency_weight = frequency_weight
-        self.connectivity_weight = connectivity_weight
-        self.centrality_weight = centrality_weight
+        self.pagerank_weight = pagerank_weight
         self.user_weight = user_weight
+        self.pagerank_damping = pagerank_damping
+        
+        # For backwards compatibility, map old names
+        self.connectivity_weight = pagerank_weight
+        self.centrality_weight = 0.0  # Merged into PageRank
     
     def score_node(
         self,
@@ -65,7 +87,9 @@ class ImportanceScorer:
         current_time: Optional[datetime] = None,
     ) -> float:
         """
-        Calculate importance score for a node.
+        Calculate importance score for a node using the paper's formula.
+        
+        Formula: ρ(e) = w1·f1(e) + w2·f2(e) + w3·f3(e) + w4·f4(e)
         
         Args:
             node: Node to score
@@ -78,32 +102,116 @@ class ImportanceScorer:
         """
         current_time = current_time or datetime.utcnow()
         
-        # Recency score (0-1)
-        recency = self._recency_score(node.accessed_at, current_time)
+        # f1: Temporal recency score (0-1) - Equation 8 in paper
+        f1_recency = self._recency_score(node.accessed_at, current_time)
         
-        # Frequency score (0-1)
-        frequency = self._frequency_score(node.access_count)
+        # f2: Access frequency score (0-1) - Equation 9 in paper
+        f2_frequency = self._frequency_score(node.access_count)
         
-        # Connectivity score (0-1)
-        connectivity = self._connectivity_score(node.id, all_edges)
+        # f3: PageRank centrality score (0-1) - Equation 10 in paper
+        f3_pagerank = self._pagerank_score(node.id, all_nodes, all_edges)
         
-        # Centrality score (0-1)
-        centrality = self._centrality_score(node, all_nodes, all_edges)
+        # f4: User/explicit importance (0-1)
+        f4_user = node.importance.value / 10.0
         
-        # User importance (0-1)
-        user = node.importance.value / 10.0
-        
-        # Weighted combination
+        # Weighted combination (Equation 7 in paper)
         score = (
-            self.recency_weight * recency +
-            self.frequency_weight * frequency +
-            self.connectivity_weight * connectivity +
-            self.centrality_weight * centrality +
-            self.user_weight * user
+            self.recency_weight * f1_recency +
+            self.frequency_weight * f2_frequency +
+            self.pagerank_weight * f3_pagerank +
+            self.user_weight * f4_user
         )
         
         # Scale to 0-10
         return min(10.0, max(0.0, score * 10))
+    
+    def _pagerank_score(
+        self,
+        node_id: str,
+        all_nodes: List[MemoryNode],
+        all_edges: List[MemoryEdge],
+    ) -> float:
+        """
+        Calculate PageRank centrality for a node.
+        
+        Uses NetworkX's PageRank implementation with caching for efficiency.
+        Implements f3(e) = PageRank(e, G) from the paper.
+        
+        Args:
+            node_id: ID of node to score
+            all_nodes: All nodes in memory
+            all_edges: All edges in memory
+        
+        Returns:
+            PageRank score normalized to [0, 1]
+        """
+        # Check cache validity
+        now = datetime.utcnow()
+        if (
+            self._pagerank_cache
+            and self._pagerank_cache_time
+            and (now - self._pagerank_cache_time).total_seconds() < self._pagerank_cache_ttl
+            and node_id in self._pagerank_cache
+        ):
+            return self._pagerank_cache.get(node_id, 0.0)
+        
+        # Need to recompute PageRank
+        try:
+            import networkx as nx
+            
+            # Build NetworkX graph
+            G = nx.DiGraph()
+            
+            # Add all nodes
+            for node in all_nodes:
+                G.add_node(node.id)
+            
+            # Add all edges
+            for edge in all_edges:
+                if edge.source_id in G.nodes and edge.target_id in G.nodes:
+                    G.add_edge(
+                        edge.source_id,
+                        edge.target_id,
+                        weight=edge.weight * edge.confidence,
+                    )
+            
+            # Handle empty or disconnected graph
+            if len(G.nodes) == 0:
+                return 0.0
+            
+            # Compute PageRank with damping factor from paper (0.85)
+            try:
+                pagerank_scores = nx.pagerank(
+                    G,
+                    alpha=self.pagerank_damping,
+                    weight='weight',
+                    max_iter=100,
+                )
+            except nx.PowerIterationFailedConvergence:
+                # Fallback to simpler computation
+                pagerank_scores = {n: 1.0 / len(G.nodes) for n in G.nodes}
+            
+            # Normalize to [0, 1] range
+            max_pr = max(pagerank_scores.values()) if pagerank_scores else 1.0
+            if max_pr > 0:
+                normalized_scores = {
+                    k: v / max_pr for k, v in pagerank_scores.items()
+                }
+            else:
+                normalized_scores = pagerank_scores
+            
+            # Update cache
+            self._pagerank_cache = normalized_scores
+            self._pagerank_cache_time = now
+            
+            return normalized_scores.get(node_id, 0.0)
+            
+        except ImportError:
+            logger.warning("NetworkX not installed, falling back to degree centrality")
+            return self._connectivity_score(node_id, all_edges)
+        except Exception as e:
+            logger.warning(f"PageRank computation failed: {e}, using fallback")
+            return self._connectivity_score(node_id, all_edges)
     
     def score_edge(
         self,

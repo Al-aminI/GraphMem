@@ -169,6 +169,8 @@ class MemoryEdge:
     An edge in the memory graph representing a relationship.
     
     Edges connect nodes and carry relationship semantics.
+    Includes temporal validity intervals [valid_from, valid_until] for
+    tracking when relationships are valid (e.g., CEO tenure periods).
     """
     id: str
     source_id: str
@@ -185,6 +187,10 @@ class MemoryEdge:
     accessed_at: datetime = field(default_factory=datetime.utcnow)
     access_count: int = 0
     memory_id: Optional[str] = None
+    # Temporal validity interval [valid_from, valid_until]
+    # Used for tracking when facts are valid (e.g., "X was CEO from 2018 to 2023")
+    valid_from: Optional[datetime] = None  # Start of validity (None = since creation)
+    valid_until: Optional[datetime] = None  # End of validity (None = still valid)
     
     def __post_init__(self):
         if not self.id:
@@ -217,6 +223,51 @@ class MemoryEdge:
             weight=max(self.weight * factor, 0.1),
         )
     
+    def is_valid_at(self, timestamp: Optional[datetime] = None) -> bool:
+        """
+        Check if this relationship is valid at a given time.
+        
+        Args:
+            timestamp: Time to check (defaults to now)
+        
+        Returns:
+            True if the relationship is valid at the given time
+        
+        Example:
+            >>> # Check if someone was CEO in 2020
+            >>> edge.is_valid_at(datetime(2020, 6, 1))
+        """
+        if timestamp is None:
+            timestamp = datetime.utcnow()
+        
+        # Check start validity
+        if self.valid_from and timestamp < self.valid_from:
+            return False
+        
+        # Check end validity
+        if self.valid_until and timestamp > self.valid_until:
+            return False
+        
+        return True
+    
+    def supersede(self, end_time: Optional[datetime] = None) -> "MemoryEdge":
+        """
+        Mark this relationship as superseded (ended).
+        
+        Used when a fact changes (e.g., CEO transition).
+        The relationship is preserved for historical queries.
+        
+        Args:
+            end_time: When the relationship ended (defaults to now)
+        
+        Returns:
+            Updated edge with valid_until set
+        """
+        return self.evolve(
+            valid_until=end_time or datetime.utcnow(),
+            state=MemoryState.ARCHIVED,
+        )
+    
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for storage/serialization."""
         return {
@@ -235,6 +286,9 @@ class MemoryEdge:
             "accessed_at": self.accessed_at.isoformat(),
             "access_count": self.access_count,
             "memory_id": self.memory_id,
+            # Temporal validity
+            "valid_from": self.valid_from.isoformat() if self.valid_from else None,
+            "valid_until": self.valid_until.isoformat() if self.valid_until else None,
         }
     
     @classmethod
@@ -256,6 +310,9 @@ class MemoryEdge:
             accessed_at=datetime.fromisoformat(data["accessed_at"]) if "accessed_at" in data else datetime.utcnow(),
             access_count=data.get("access_count", 0),
             memory_id=data.get("memory_id"),
+            # Temporal validity
+            valid_from=datetime.fromisoformat(data["valid_from"]) if data.get("valid_from") else None,
+            valid_until=datetime.fromisoformat(data["valid_until"]) if data.get("valid_until") else None,
         )
 
 
