@@ -1105,7 +1105,7 @@ class ComprehensiveEvaluator:
             print(f"   📊 GraphMem: Ingesting {len(documents)} documents...")
             gm_result = gm.ingest_batch(
                 documents=documents,
-                max_workers=10,
+                max_workers=20,
                 show_progress=True,
                 aggressive=True,
             )
@@ -1307,7 +1307,7 @@ class ComprehensiveEvaluator:
             print(f"   📊 GraphMem: Ingesting {len(documents)} documents...")
             gm_result = gm.ingest_batch(
                 documents=documents,
-                max_workers=4,
+                max_workers=20,
                 show_progress=True,
                 aggressive=True,
             )

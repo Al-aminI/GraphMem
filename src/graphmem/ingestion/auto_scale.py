@@ -5,13 +5,16 @@ Auto-Scaling Worker Configuration
 Automatically determines optimal worker counts based on:
 - CPU cores (for ThreadPool concurrent I/O)
 - Available system memory (for batch sizes)
-- API rate limits (the REAL bottleneck for cloud APIs)
 - GPU availability (only matters for LOCAL embeddings/LLMs)
+
+Rate Limit Handling:
+- Rate limits are NOT enforced by limiting workers
+- Instead, use aggressive parallelism and handle rate limits with retry logic
+- The ingest_batch() method has infinite retry with exponential backoff
 
 IMPORTANT: For API-based usage (Azure, OpenAI, OpenRouter):
 - GPU does NOT help - LLM/embedding calls go to cloud servers
-- The bottleneck is API rate limits, not compute
-- Workers are capped by rate limits, not hardware
+- Workers are set high, rate limit errors are handled by retry
 
 GPU only matters when using:
 - embedding_provider="local" (sentence-transformers with CUDA)
@@ -21,7 +24,7 @@ Usage:
     from graphmem.ingestion.auto_scale import AutoScaler
     
     scaler = AutoScaler()
-    config = scaler.get_optimal_config()
+    config = scaler.get_optimal_config(aggressive=True)
     
     # Or detect and print hardware info
     scaler.print_hardware_info()
@@ -85,15 +88,14 @@ class OptimalConfig:
         return f"""
 Optimal Configuration:
   Extraction Workers: {self.extraction_workers}
-  Extraction Rate Limit: {self.extraction_rate_limit}/min
   Embedding Workers: {self.embedding_workers}
   Embedding Batch Size: {self.embedding_batch_size}
-  Embedding Rate Limit: {self.embedding_rate_limit}/min
   Max Concurrent Docs: {self.max_concurrent_docs}
   Chunk Size: {self.chunk_size}
   Max Memory: {self.max_memory_mb}MB
   Use GPU Embeddings: {self.use_gpu_embeddings}
   Use Local LLM: {self.use_local_llm}
+  Rate Limits: Handled by retry logic (not capped)
 """
 
 
@@ -251,45 +253,32 @@ class AutoScaler:
         cpu_factor = hw.cpu_threads
         ram_factor = hw.ram_available_gb
         
-        # Provider-specific rate limits
-        provider_limits = {
-            "azure": {"llm_rpm": 60, "emb_rpm": 3000},
-            "openai": {"llm_rpm": 60, "emb_rpm": 3000},
-            "openrouter": {"llm_rpm": 200, "emb_rpm": 500},
-            "anthropic": {"llm_rpm": 50, "emb_rpm": 0},
-            "local": {"llm_rpm": 999999, "emb_rpm": 999999},  # No API limits
-        }
-        
-        limits = provider_limits.get(provider, provider_limits["openai"])
-        
-        # Calculate extraction workers
-        # For API calls, limited by rate limit, not CPU
+        # Calculate extraction workers - no rate limit consideration
+        # Use CPU threads as the primary factor for concurrent API calls
         if provider == "local":
             # Local LLM: CPU/GPU bound
             if hw.gpu_available:
-                extraction_workers = min(hw.gpu_count * 4, 16)
+                extraction_workers = min(hw.gpu_count * 4, 32)
             else:
-                extraction_workers = min(cpu_factor, 8)
+                extraction_workers = min(cpu_factor, 16)
         else:
-            # API: Rate limit bound
-            # Can't send more than rate_limit/60 requests per second
-            max_by_rate = limits["llm_rpm"] // 60 * 2  # 2 seconds worth of requests in flight
-            max_by_cpu = cpu_factor * 2  # Network I/O bound, can do more than CPU count
-            extraction_workers = min(max_by_rate, max_by_cpu, 20 if aggressive else 10)
+            # API: Use hardware capacity, no rate limit throttling
+            # The caller is responsible for handling rate limits with retry logic
+            max_by_cpu = cpu_factor * 4  # Network I/O bound, can do much more than CPU count
+            extraction_workers = min(max_by_cpu, 40 if aggressive else 20)
         
-        # Calculate embedding workers
+        # Calculate embedding workers - no rate limit consideration
         if embedding_type == "local":
             # Local embeddings: GPU or CPU bound
             if hw.gpu_available:
                 embedding_workers = 1  # GPU does batching internally
                 embedding_batch_size = min(int(hw.gpu_vram_gb * 100), 500)  # ~100 texts per GB VRAM
             else:
-                embedding_workers = min(cpu_factor, 4)
+                embedding_workers = min(cpu_factor, 8)
                 embedding_batch_size = 32
         else:
-            # API embeddings: Rate limit bound
-            max_by_rate = limits["emb_rpm"] // 60
-            embedding_workers = min(max_by_rate, cpu_factor, 16 if aggressive else 8)
+            # API embeddings: Use hardware capacity
+            embedding_workers = min(cpu_factor * 2, 32 if aggressive else 16)
             embedding_batch_size = 100  # Most APIs support batches of 100
         
         # Memory-based limits
@@ -307,10 +296,10 @@ class AutoScaler:
         
         return OptimalConfig(
             extraction_workers=max(1, extraction_workers),
-            extraction_rate_limit=limits["llm_rpm"],
+            extraction_rate_limit=0,  # No rate limit - handled by retry logic
             embedding_workers=max(1, embedding_workers),
             embedding_batch_size=embedding_batch_size,
-            embedding_rate_limit=limits["emb_rpm"],
+            embedding_rate_limit=0,  # No rate limit - handled by retry logic
             chunk_size=chunk_size,
             max_concurrent_docs=max(10, max_concurrent),
             max_memory_mb=int(ram_factor * 1024 * 0.8),  # Use 80% of available
@@ -362,10 +351,10 @@ class AutoScaler:
         print("=" * 60)
         print(config)
         
-        # Explain the bottleneck
+        # Explain the approach
         if provider != "local":
-            print(f"⚠️  BOTTLENECK: API rate limits ({config.extraction_rate_limit} req/min)")
-            print(f"   Workers capped by rate limits, NOT hardware")
+            print(f"✅ AGGRESSIVE PARALLELISM: {config.extraction_workers} workers")
+            print(f"   Rate limits handled by retry logic (infinite backoff)")
         else:
             if self.hardware.gpu_available:
                 print(f"✅ BOTTLENECK: GPU compute (using {self.hardware.gpu_name})")
