@@ -3,11 +3,19 @@ Auto-Scaling Worker Configuration
 ==================================
 
 Automatically determines optimal worker counts based on:
-- CPU cores
-- GPU availability and VRAM
-- Available system memory
-- API rate limits
-- Network bandwidth estimates
+- CPU cores (for ThreadPool concurrent I/O)
+- Available system memory (for batch sizes)
+- API rate limits (the REAL bottleneck for cloud APIs)
+- GPU availability (only matters for LOCAL embeddings/LLMs)
+
+IMPORTANT: For API-based usage (Azure, OpenAI, OpenRouter):
+- GPU does NOT help - LLM/embedding calls go to cloud servers
+- The bottleneck is API rate limits, not compute
+- Workers are capped by rate limits, not hardware
+
+GPU only matters when using:
+- embedding_provider="local" (sentence-transformers with CUDA)
+- llm_provider="ollama" (local LLM with GPU)
 
 Usage:
     from graphmem.ingestion.auto_scale import AutoScaler
@@ -327,15 +335,17 @@ class AutoScaler:
         print(f"   Total RAM: {hw.ram_gb:.1f} GB")
         print(f"   Available: {hw.ram_available_gb:.1f} GB")
         
-        print(f"\n🎮 GPU:")
+        print(f"\n🎮 GPU (only used for LOCAL models):")
         if hw.gpu_available:
             print(f"   Available: ✅ Yes")
             print(f"   Count: {hw.gpu_count}")
             print(f"   Name: {hw.gpu_name}")
             print(f"   VRAM: {hw.gpu_vram_gb:.1f} GB" if hw.gpu_vram_gb else "   VRAM: Shared")
             print(f"   CUDA: {'✅ Yes' if hw.gpu_cuda_available else '❌ No'}")
+            print(f"   ⚠️  Note: GPU not used for API calls (Azure/OpenAI)")
         else:
             print(f"   Available: ❌ No")
+            print(f"   ℹ️  Not needed for API-based providers")
         
         print(f"\n🖥️  System:")
         print(f"   OS: {hw.os_name}")
@@ -352,7 +362,17 @@ class AutoScaler:
         print("=" * 60)
         print(config)
         
-        print("📝 Usage:")
+        # Explain the bottleneck
+        if provider != "local":
+            print(f"⚠️  BOTTLENECK: API rate limits ({config.extraction_rate_limit} req/min)")
+            print(f"   Workers capped by rate limits, NOT hardware")
+        else:
+            if self.hardware.gpu_available:
+                print(f"✅ BOTTLENECK: GPU compute (using {self.hardware.gpu_name})")
+            else:
+                print(f"⚠️  BOTTLENECK: CPU compute (no GPU detected)")
+        
+        print("\n📝 Usage:")
         print(f"""
 from graphmem import GraphMem, MemoryConfig
 

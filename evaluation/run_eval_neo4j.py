@@ -387,12 +387,14 @@ class Neo4jEvaluator:
         gm_ingest_start = time.time()
         
         try:
-            # High-performance batch ingestion with auto-scaling
+            # High-performance batch ingestion with AGGRESSIVE mode
+            # More workers, with retry logic for rate limits
             batch_result = gm.ingest_batch(
                 documents=documents,
                 max_workers=None,  # Auto-detect optimal workers
                 show_progress=True,
                 auto_scale=True,   # Enable hardware-aware scaling
+                aggressive=True,   # Use more workers (will retry on rate limits)
             )
             gm_ingest_errors = batch_result.get("documents_failed", 0)
             gm_docs_processed = batch_result.get("documents_processed", 0)

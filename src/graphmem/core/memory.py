@@ -660,6 +660,7 @@ class GraphMem:
         max_workers: Optional[int] = None,
         show_progress: bool = True,
         auto_scale: bool = True,
+        aggressive: bool = False,
     ) -> Dict[str, Any]:
         """
         High-performance batch ingestion using concurrent processing.
@@ -697,16 +698,21 @@ class GraphMem:
         # Auto-detect optimal workers if not specified
         if max_workers is None and auto_scale:
             try:
-                from graphmem.ingestion import get_optimal_workers
-                optimal = get_optimal_workers(provider=self.config.llm_provider)
-                max_workers = optimal.get("extraction_workers", 10)
+                from graphmem.ingestion import AutoScaler
+                scaler = AutoScaler()
+                config = scaler.get_optimal_config(
+                    provider=self.config.llm_provider,
+                    aggressive=aggressive,
+                )
+                max_workers = config.extraction_workers
+                mode = "AGGRESSIVE" if aggressive else "normal"
                 if show_progress:
-                    logger.info(f"🔧 Auto-detected optimal workers: {max_workers} (provider: {self.config.llm_provider})")
+                    logger.info(f"🔧 Auto-detected workers: {max_workers} ({mode} mode, provider: {self.config.llm_provider})")
             except Exception as e:
                 logger.warning(f"Auto-scale failed, using default: {e}")
-                max_workers = 10
+                max_workers = 10 if aggressive else 5
         elif max_workers is None:
-            max_workers = 10
+            max_workers = 10 if aggressive else 5
         
         if show_progress:
             logger.info(f"🚀 Batch ingesting {len(documents)} documents with {max_workers} workers")
@@ -719,24 +725,43 @@ class GraphMem:
         total_relationships = 0
         
         def ingest_single(doc):
-            """Ingest a single document."""
+            """Ingest a single document with retry logic for rate limits."""
             nonlocal processed, failed, total_entities, total_relationships
             
             doc_id = doc.get("id", "unknown")
             content = doc.get("content", doc.get("text", ""))
             
-            try:
-                result = self.ingest(content, progress_callback=None)
-                
-                with results_lock:
-                    processed += 1
-                    total_entities += result.get("entities", 0)
-                    total_relationships += result.get("relationships", 0)
-                
-                return {"success": True, "doc_id": doc_id}
-                
-            except Exception as e:
-                with results_lock:
+            # Retry logic for rate limits (429 errors)
+            max_retries = 5
+            base_delay = 2  # seconds
+            
+            for attempt in range(max_retries):
+                try:
+                    result = self.ingest(content, progress_callback=None)
+                    
+                    with results_lock:
+                        processed += 1
+                        total_entities += result.get("entities", 0)
+                        total_relationships += result.get("relationships", 0)
+                    
+                    return {"success": True, "doc_id": doc_id}
+                    
+                except Exception as e:
+                    error_str = str(e).lower()
+                    
+                    # Check if it's a rate limit error (429)
+                    is_rate_limit = any(x in error_str for x in ['429', 'rate limit', 'too many requests', 'quota'])
+                    
+                    if is_rate_limit and attempt < max_retries - 1:
+                        # Exponential backoff: 2, 4, 8, 16, 32 seconds
+                        delay = base_delay * (2 ** attempt)
+                        if show_progress:
+                            logger.warning(f"   ⏳ Rate limit hit for {doc_id}, retry {attempt + 1}/{max_retries} in {delay}s")
+                        time.sleep(delay)
+                        continue
+                    
+                    # Not a rate limit or max retries reached
+                    with results_lock:
                     failed += 1
                 
                 logger.warning(f"   ⚠️ Failed to ingest {doc_id}: {str(e)[:80]}")
