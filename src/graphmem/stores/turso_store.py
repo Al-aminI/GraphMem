@@ -701,6 +701,38 @@ class TursoStore:
         
         return edges
     
+    def supersede_relationship(
+        self,
+        memory_id: str,
+        edge_id: str,
+        end_time: Optional[datetime] = None,
+    ) -> bool:
+        """
+        Mark a relationship as superseded (no longer valid).
+        
+        Used when facts change, e.g., CEO transitions.
+        The old relationship is preserved for historical queries.
+        
+        Args:
+            memory_id: Memory containing the edge
+            edge_id: ID of edge to supersede
+            end_time: When the relationship ended (defaults to now)
+        
+        Returns:
+            True if successful
+        """
+        end_time = end_time or datetime.utcnow()
+        
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            UPDATE relationships 
+            SET valid_until = ?, state = 'ARCHIVED'
+            WHERE id = ? AND memory_id = ?
+        """, (end_time.isoformat(), edge_id, memory_id))
+        
+        self.conn.commit()
+        return cursor.rowcount > 0
+    
     def _sync(self) -> None:
         """Sync with Turso Cloud."""
         try:
