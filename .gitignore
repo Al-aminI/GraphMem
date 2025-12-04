@@ -81,3 +81,7 @@ Thumbs.db
 # Paper (not for distribution)
 paper/
 PAPER.md
+eval_graphmem.db_cache.db
+eval_graphmem.db
+*.db
+evaluation/results/
