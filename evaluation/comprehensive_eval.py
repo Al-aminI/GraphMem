@@ -286,26 +286,40 @@ class ComprehensiveEvaluator:
     
     def _load_corpus(self) -> List[Dict]:
         """Load corpus documents."""
-        corpus_file = self.data_dir / "corpus.json"
-        logger.info(f"Looking for corpus at: {corpus_file}")
-        if corpus_file.exists():
-            with open(corpus_file) as f:
-                data = json.load(f)
-                logger.info(f"Loaded {len(data)} corpus documents")
-                return data
-        logger.warning(f"Corpus file not found: {corpus_file}")
+        # Try multiple possible filenames
+        possible_files = [
+            self.data_dir / "multihoprag_corpus.json",
+            self.data_dir / "corpus.json",
+        ]
+        
+        for corpus_file in possible_files:
+            logger.info(f"Looking for corpus at: {corpus_file}")
+            if corpus_file.exists():
+                with open(corpus_file) as f:
+                    data = json.load(f)
+                    logger.info(f"✅ Loaded {len(data)} corpus documents from {corpus_file.name}")
+                    return data
+        
+        logger.warning(f"Corpus file not found in: {self.data_dir}")
         return []
     
     def _load_qa(self) -> List[Dict]:
         """Load QA samples."""
-        qa_file = self.data_dir / "qa_samples.json"
-        logger.info(f"Looking for QA at: {qa_file}")
-        if qa_file.exists():
-            with open(qa_file) as f:
-                data = json.load(f)
-                logger.info(f"Loaded {len(data)} QA samples")
-                return data
-        logger.warning(f"QA file not found: {qa_file}")
+        # Try multiple possible filenames
+        possible_files = [
+            self.data_dir / "multihoprag_qa.json",
+            self.data_dir / "qa_samples.json",
+        ]
+        
+        for qa_file in possible_files:
+            logger.info(f"Looking for QA at: {qa_file}")
+            if qa_file.exists():
+                with open(qa_file) as f:
+                    data = json.load(f)
+                    logger.info(f"✅ Loaded {len(data)} QA samples from {qa_file.name}")
+                    return data
+        
+        logger.warning(f"QA file not found in: {self.data_dir}")
         return []
     
     def _init_graphmem(self) -> GraphMem:
