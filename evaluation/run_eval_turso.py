@@ -385,15 +385,18 @@ class TursoEvaluator:
         gm_ingest_start = time.time()
         
         try:
-            # Try high-performance batch ingestion
+            # Try high-performance batch ingestion with AUTO-SCALING
+            # Workers auto-detected based on hardware + API rate limits
             batch_result = gm.ingest_batch(
                 documents=documents,
-                max_workers=10,  # Concurrent LLM calls
+                max_workers=None,  # Auto-detect optimal workers
                 show_progress=True,
+                auto_scale=True,   # Enable hardware-aware scaling
             )
             gm_ingest_errors = batch_result.get("documents_failed", 0)
             gm_docs_processed = batch_result.get("documents_processed", 0)
-            logger.info(f"   Batch ingestion stats: {gm_docs_processed} processed, {gm_ingest_errors} failed")
+            throughput = batch_result.get("throughput_docs_per_sec", 0)
+            logger.info(f"   Batch stats: {gm_docs_processed} processed, {gm_ingest_errors} failed, {throughput:.2f} docs/sec")
             
         except Exception as e:
             logger.warning(f"   Batch ingestion failed, falling back to sequential: {e}")

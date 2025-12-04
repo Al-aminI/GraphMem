@@ -371,18 +371,44 @@ class Neo4jEvaluator:
         
         print("\n📦 Ingesting corpus into both systems...")
         
-        # GraphMem with Neo4j
-        print("   → GraphMem (Neo4j)...")
+        # GraphMem with Neo4j - HIGH-PERFORMANCE BATCH INGESTION
+        print("   → GraphMem (Neo4j) - Batch Mode with Auto-Scaling...")
         gm = self._init_graphmem()
-        gm_ingest_start = time.time()
+        
+        # Prepare documents for batch ingestion
+        documents = []
         for i, doc in enumerate(corpus_sample):
             content = f"{doc.get('title', '')}\n{doc.get('body', '')}"
-            try:
-                gm.ingest(content[:10000])
-            except Exception as e:
-                print(f"      Warning: {e}")
-            if (i + 1) % 20 == 0:
-                print(f"      {i+1}/{len(corpus_sample)} docs ingested")
+            documents.append({
+                "id": f"doc_{i}",
+                "content": content[:10000],
+            })
+        
+        gm_ingest_start = time.time()
+        
+        try:
+            # High-performance batch ingestion with auto-scaling
+            batch_result = gm.ingest_batch(
+                documents=documents,
+                max_workers=None,  # Auto-detect optimal workers
+                show_progress=True,
+                auto_scale=True,   # Enable hardware-aware scaling
+            )
+            gm_ingest_errors = batch_result.get("documents_failed", 0)
+            gm_docs_processed = batch_result.get("documents_processed", 0)
+            throughput = batch_result.get("throughput_docs_per_sec", 0)
+            print(f"      Batch stats: {gm_docs_processed} processed, {gm_ingest_errors} failed, {throughput:.2f} docs/sec")
+        except Exception as e:
+            print(f"      Batch ingestion failed, falling back to sequential: {e}")
+            # Fallback to sequential
+            for i, doc in enumerate(documents):
+                try:
+                    gm.ingest(doc["content"])
+                except Exception as e2:
+                    print(f"      Warning: {e2}")
+                if (i + 1) % 20 == 0:
+                    print(f"      {i+1}/{len(documents)} docs ingested")
+        
         gm_ingest_time = time.time() - gm_ingest_start
         print(f"   → GraphMem ingestion: {gm_ingest_time:.1f}s")
         
