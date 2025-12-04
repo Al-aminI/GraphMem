@@ -369,26 +369,44 @@ class TursoEvaluator:
             rag = self._init_naive_rag()
         
         # ==================== PHASE 3: Ingest Corpus ====================
-        logger.info("📊 PHASE 3: Ingesting corpus")
+        logger.info("📊 PHASE 3: Ingesting corpus (HIGH-PERFORMANCE BATCH MODE)")
         
-        # GraphMem ingestion with detailed logging
-        logger.info("📦 Ingesting into GraphMem...")
-        gm_ingest_start = time.time()
-        gm_ingest_errors = 0
-        
+        # Prepare documents for batch ingestion
+        documents = []
         for i, doc in enumerate(corpus_sample):
-            doc_start = time.time()
             content = f"{doc.get('title', '')}\n{doc.get('body', '')}"
-            try:
-                gm.ingest(content[:10000])
-                doc_time = time.time() - doc_start
-                if (i + 1) % 10 == 0:
-                    logger.info(f"   GraphMem: {i+1}/{len(corpus_sample)} docs ({doc_time:.2f}s/doc)")
-            except Exception as e:
-                gm_ingest_errors += 1
-                logger.warning(f"   ⚠️ GraphMem ingest error [{i+1}]: {str(e)[:100]}")
-                if gm_ingest_errors >= 5:
-                    logger.error(f"   ❌ Too many errors ({gm_ingest_errors}), check API key/endpoint!")
+            documents.append({
+                "id": f"doc_{i}",
+                "content": content[:10000],
+            })
+        
+        # Use high-performance batch ingestion
+        logger.info(f"📦 Batch ingesting {len(documents)} documents into GraphMem...")
+        gm_ingest_start = time.time()
+        
+        try:
+            # Try high-performance batch ingestion
+            batch_result = gm.ingest_batch(
+                documents=documents,
+                max_workers=10,  # Concurrent LLM calls
+                show_progress=True,
+            )
+            gm_ingest_errors = batch_result.get("documents_failed", 0)
+            gm_docs_processed = batch_result.get("documents_processed", 0)
+            logger.info(f"   Batch ingestion stats: {gm_docs_processed} processed, {gm_ingest_errors} failed")
+            
+        except Exception as e:
+            logger.warning(f"   Batch ingestion failed, falling back to sequential: {e}")
+            # Fall back to sequential
+            gm_ingest_errors = 0
+            for i, doc in enumerate(documents):
+                try:
+                    gm.ingest(doc["content"])
+                    if (i + 1) % 10 == 0:
+                        logger.info(f"   GraphMem: {i+1}/{len(documents)} docs")
+                except Exception as e:
+                    gm_ingest_errors += 1
+                    logger.warning(f"   ⚠️ GraphMem ingest error [{i+1}]: {str(e)[:100]}")
         
         gm_ingest_time = time.time() - gm_ingest_start
         logger.info(f"✅ GraphMem ingestion complete: {gm_ingest_time:.1f}s ({gm_ingest_errors} errors)")
