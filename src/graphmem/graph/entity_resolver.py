@@ -84,10 +84,10 @@ class EntityResolver:
         self._embedding_cache: Dict[str, np.ndarray] = {}
         
         # Thread-safety: resolve() is called from concurrent ingestion workers.
-        # We protect all mutations/iterations over the internal indexes with this lock
-        # to avoid "dictionary changed size during iteration".
+        # We use fine-grained locks and snapshot/merge to minimize contention.
         import threading
-        self._lock = threading.Lock()
+        self._lock = threading.Lock()        # protects _entity_index / _alias_lookup
+        self._cache_lock = threading.Lock()  # protects _embedding_cache
     
     def resolve(
         self,
@@ -109,71 +109,89 @@ class EntityResolver:
         if not nodes:
             return []
         
-        # Serialize resolve to protect internal dictionaries from concurrent mutation
+        # Snapshot global indexes to avoid holding the lock during heavy work
         with self._lock:
-            resolved_nodes = []
+            index_snapshot = dict(self._entity_index)
+            alias_snapshot = dict(self._alias_lookup)
+        
+        # Local working copies
+        local_index = dict(index_snapshot)
+        local_alias = dict(alias_snapshot)
+        resolved_nodes: List[MemoryNode] = []
+        touched_keys: Set[str] = set()
+        
+        for node in nodes:
+            canonical, key = self._resolve_entity_from_maps(
+                node=node,
+                index_map=local_index,
+                alias_map=local_alias,
+            )
             
-            for node in nodes:
-                canonical, key = self._resolve_entity(node)
+            if canonical:
+                # Merge with existing canonical in local map
+                merged = self._merge_entities(canonical, node)
+                local_index[key] = merged
+                touched_keys.add(key)
                 
-                if canonical:
-                    # Merge with existing
-                    merged = self._merge_entities(canonical, node)
-                    self._entity_index[key] = merged
-                    
-                    # Use best embedding (prefer non-None, then node's)
-                    best_embedding = merged.embedding
-                    if best_embedding is None and node.embedding is not None:
-                        best_embedding = np.array(node.embedding) if isinstance(node.embedding, list) else node.embedding
-                    
-                    # Update the node with canonical info
-                    resolved_node = MemoryNode(
-                        id=key,  # Use canonical key as ID
-                        name=merged.name,
-                        entity_type=merged.entity_type or node.entity_type,
-                        description=self._best_description(merged.descriptions),
-                        canonical_name=merged.name,
-                        aliases=merged.aliases,
-                        embedding=list(best_embedding) if best_embedding is not None else None,  # Preserve embedding!
-                        properties={
-                            **node.properties,
-                            "canonical_name": merged.name,
-                            "aliases": list(merged.aliases),
-                            "occurrence_count": merged.occurrences,
-                        },
-                        user_id=user_id,  # Multi-tenant isolation
-                        memory_id=memory_id,
-                    )
-                    
-                    # Only add if not already in resolved
-                    if not any(n.id == resolved_node.id for n in resolved_nodes):
-                        resolved_nodes.append(resolved_node)
-                else:
-                    # New entity
-                    candidate = self._create_candidate(node)
-                    key = self._generate_key(node.name)
-                    self._entity_index[key] = candidate
-                    self._register_alias(node.name, key)
-                    
-                    resolved_node = MemoryNode(
-                        id=key,
-                        name=node.name,
-                        entity_type=node.entity_type,
-                        description=node.description,
-                        canonical_name=node.name,
-                        aliases={node.name},
-                        embedding=node.embedding,  # Preserve embedding!
-                        properties={
-                            **node.properties,
-                            "canonical_name": node.name,
-                        },
-                        user_id=user_id,  # Multi-tenant isolation
-                        memory_id=memory_id,
-                    )
+                best_embedding = merged.embedding
+                if best_embedding is None and node.embedding is not None:
+                    best_embedding = np.array(node.embedding) if isinstance(node.embedding, list) else node.embedding
+                
+                resolved_node = MemoryNode(
+                    id=key,  # Use canonical key as ID
+                    name=merged.name,
+                    entity_type=merged.entity_type or node.entity_type,
+                    description=self._best_description(merged.descriptions),
+                    canonical_name=merged.name,
+                    aliases=merged.aliases,
+                    embedding=list(best_embedding) if best_embedding is not None else None,  # Preserve embedding!
+                    properties={
+                        **node.properties,
+                        "canonical_name": merged.name,
+                        "aliases": list(merged.aliases),
+                        "occurrence_count": merged.occurrences,
+                    },
+                    user_id=user_id,  # Multi-tenant isolation
+                    memory_id=memory_id,
+                )
+                
+                if not any(n.id == resolved_node.id for n in resolved_nodes):
                     resolved_nodes.append(resolved_node)
-            
-            logger.info(f"Resolved {len(nodes)} nodes to {len(resolved_nodes)} unique entities")
-            return resolved_nodes
+            else:
+                # New entity: add to local maps
+                candidate = self._create_candidate(node)
+                key = self._generate_key(node.name)
+                local_index[key] = candidate
+                self._register_alias_in_map(node.name, key, local_alias)
+                touched_keys.add(key)
+                
+                resolved_node = MemoryNode(
+                    id=key,
+                    name=node.name,
+                    entity_type=node.entity_type,
+                    description=node.description,
+                    canonical_name=node.name,
+                    aliases={node.name},
+                    embedding=node.embedding,  # Preserve embedding!
+                    properties={
+                        **node.properties,
+                        "canonical_name": node.name,
+                    },
+                    user_id=user_id,  # Multi-tenant isolation
+                    memory_id=memory_id,
+                )
+                resolved_nodes.append(resolved_node)
+        
+        # Merge local changes back into the shared indexes with minimal lock time
+        if touched_keys:
+            with self._lock:
+                for k in touched_keys:
+                    self._entity_index[k] = local_index[k]
+                # Merge aliases (local_alias has all mappings)
+                self._alias_lookup.update(local_alias)
+        
+        logger.info(f"Resolved {len(nodes)} nodes to {len(resolved_nodes)} unique entities")
+        return resolved_nodes
     
     def _resolve_entity(
         self,
@@ -247,6 +265,99 @@ class EntityResolver:
             return best_match, best_key
         
         return None, None
+
+    # ---------- Snapshot-based resolution helpers (thread-safe & fast) ----------
+    def _resolve_entity_from_maps(
+        self,
+        node: MemoryNode,
+        index_map: Dict[str, EntityCandidate],
+        alias_map: Dict[str, str],
+    ) -> Tuple[Optional[EntityCandidate], Optional[str]]:
+        """Resolve using provided maps (no locking, used on local snapshots)."""
+        cleaned_name = self._clean_name(node.name)
+        tokens = self._tokenize(cleaned_name)
+        
+        # Check direct alias lookup
+        direct_key = alias_map.get(cleaned_name.lower())
+        if direct_key and direct_key in index_map:
+            return index_map[direct_key], direct_key
+        
+        # Check slug alias
+        slug = re.sub(r'[^a-z0-9]', '', cleaned_name.lower())
+        slug_key = alias_map.get(slug)
+        if slug_key and slug_key in index_map:
+            return index_map[slug_key], slug_key
+        
+        # Get embedding for semantic comparison
+        embedding = self._get_embedding_threadsafe(node.description or cleaned_name)
+        
+        best_match = None
+        best_score = 0.0
+        best_key = None
+        
+        for key, candidate in index_map.items():
+            if (
+                node.entity_type and
+                candidate.entity_type and
+                node.entity_type.lower() != candidate.entity_type.lower()
+            ):
+                continue
+            
+            token_score = self._token_similarity(tokens, candidate.tokens)
+            fuzzy_score = self._fuzzy_similarity(cleaned_name, candidate.name)
+            embedding_score = self._embedding_similarity(embedding, candidate.embedding)
+            
+            qualifies = (
+                fuzzy_score >= self.fuzzy_threshold or
+                token_score >= self.token_threshold or
+                (token_score >= 0.6 and embedding_score >= self.similarity_threshold) or
+                (embedding_score >= 0.92 and fuzzy_score >= 0.85)
+            )
+            if not qualifies:
+                continue
+            
+            combined = max(
+                fuzzy_score,
+                token_score,
+                (token_score * 0.4 + embedding_score * 0.6) if embedding_score else 0.0,
+            )
+            
+            if combined > best_score:
+                best_score = combined
+                best_match = candidate
+                best_key = key
+        
+        if best_match:
+            return best_match, best_key
+        
+        return None, None
+    
+    def _register_alias_in_map(self, alias: str, canonical_key: str, alias_map: Dict[str, str]) -> None:
+        """Register alias in a given alias_map (used for snapshots)."""
+        if not alias:
+            return
+        lowered = alias.lower()
+        alias_map[lowered] = canonical_key
+        
+        slug = re.sub(r'[^a-z0-9]', '', lowered)
+        if slug:
+            alias_map.setdefault(slug, canonical_key)
+    
+    def _get_embedding_threadsafe(self, text: str) -> Optional[np.ndarray]:
+        """Thread-safe embedding cache access."""
+        if not text or not text.strip():
+            return None
+        
+        cache_key = text[:500].lower()
+        with self._cache_lock:
+            if cache_key in self._embedding_cache:
+                return self._embedding_cache[cache_key]
+        
+        embedding = self._get_embedding(text)
+        if embedding is not None:
+            with self._cache_lock:
+                self._embedding_cache[cache_key] = embedding
+        return embedding
     
     def _create_candidate(self, node: MemoryNode) -> EntityCandidate:
         """Create an entity candidate from a node."""
