@@ -264,14 +264,16 @@ class TursoEvaluator:
         
         return NaiveRAG(emb, llm)
     
-    def _init_graphmem(self):
+    def _init_graphmem(self, skip_ingestion: bool = False):
         """Initialize GraphMem with TURSO backend."""
         from graphmem import GraphMem, MemoryConfig
         
-        # Clean up old database
-        if os.path.exists(self.turso_db_path):
+        # Clean up old database (unless skipping ingestion)
+        if not skip_ingestion and os.path.exists(self.turso_db_path):
             logger.info(f"🗑️  Removing old database: {self.turso_db_path}")
             os.remove(self.turso_db_path)
+        elif skip_ingestion and os.path.exists(self.turso_db_path):
+            logger.info(f"♻️  Reusing existing database: {self.turso_db_path}")
         
         logger.info(f"🔧 Building MemoryConfig...")
         logger.info(f"   LLM Provider: {self.llm_provider}")
@@ -332,6 +334,7 @@ class TursoEvaluator:
         n_corpus_docs: int = 100,
         n_qa_samples: int = 50,
         seed: int = 42,
+        skip_ingestion: bool = False,
     ) -> BenchmarkSummary:
         """Run the evaluation with TURSO backend."""
         random.seed(seed)
@@ -350,6 +353,7 @@ class TursoEvaluator:
         print(f"   Embeddings: {self.embedding_model}")
         print(f"   Backend: 🔥 TURSO (SQLite + native vector search)")
         print(f"   Database: {self.turso_db_path}")
+        print(f"   Skip Ingestion: {'✅ Yes (reusing existing data)' if skip_ingestion else '❌ No (fresh ingestion)'}")
         if self.llm_provider == "azure":
             print(f"   Azure Endpoint: {self.azure_endpoint}")
         print("=" * 70)
@@ -363,82 +367,100 @@ class TursoEvaluator:
         logger.info("📊 PHASE 2: Initializing systems")
         
         with Timer("Initialize GraphMem (Turso)"):
-            gm = self._init_graphmem()
+            gm = self._init_graphmem(skip_ingestion=skip_ingestion)
         
         with Timer("Initialize Naive RAG"):
             rag = self._init_naive_rag()
         
         # ==================== PHASE 3: Ingest Corpus ====================
-        logger.info("📊 PHASE 3: Ingesting corpus (HIGH-PERFORMANCE BATCH MODE)")
-        
-        # Prepare documents for batch ingestion
-        documents = []
-        for i, doc in enumerate(corpus_sample):
-            content = f"{doc.get('title', '')}\n{doc.get('body', '')}"
-            documents.append({
-                "id": f"doc_{i}",
-                "content": content[:10000],
-            })
-        
-        # Use high-performance batch ingestion
-        logger.info(f"📦 Batch ingesting {len(documents)} documents into GraphMem...")
-        gm_ingest_start = time.time()
-        
-        try:
-            # High-performance batch ingestion with 10 workers
-            # Infinite retry on rate limits - will never fail
-            batch_result = gm.ingest_batch(
-                documents=documents,
-                max_workers=10,    # Hardcoded 10 workers
-                show_progress=True,
-                auto_scale=False,  # Disabled
-                aggressive=True,   # Infinite retry on rate limits
-            )
-            gm_ingest_errors = batch_result.get("documents_failed", 0)
-            gm_docs_processed = batch_result.get("documents_processed", 0)
-            throughput = batch_result.get("throughput_docs_per_sec", 0)
-            logger.info(f"   Batch stats: {gm_docs_processed} processed, {gm_ingest_errors} failed, {throughput:.2f} docs/sec")
-            
-        except Exception as e:
-            logger.warning(f"   Batch ingestion failed, falling back to sequential: {e}")
-            # Fall back to sequential
+        if skip_ingestion:
+            logger.info("📊 PHASE 3: ⏭️  SKIPPING INGESTION (using existing data)")
+            logger.info("   Loading from existing Turso database...")
+            gm_ingest_time = 0
             gm_ingest_errors = 0
-            for i, doc in enumerate(documents):
+            rag_ingest_time = 0
+            rag_ingest_errors = 0
+            # Still need to ingest into naive RAG for comparison
+            logger.info("📦 Ingesting into Naive RAG (for comparison)...")
+            rag_ingest_start = time.time()
+            for i, doc in enumerate(corpus_sample):
                 try:
-                    gm.ingest(doc["content"])
-                    if (i + 1) % 10 == 0:
-                        logger.info(f"   GraphMem: {i+1}/{len(documents)} docs")
+                    rag.ingest(doc)
+                except:
+                    pass
+            rag_ingest_time = time.time() - rag_ingest_start
+            logger.info(f"   Naive RAG ready: {rag_ingest_time:.1f}s")
+        else:
+            logger.info("📊 PHASE 3: Ingesting corpus (HIGH-PERFORMANCE BATCH MODE)")
+            
+            # Prepare documents for batch ingestion
+            documents = []
+            for i, doc in enumerate(corpus_sample):
+                content = f"{doc.get('title', '')}\n{doc.get('body', '')}"
+                documents.append({
+                    "id": f"doc_{i}",
+                    "content": content[:10000],
+                })
+            
+            # Use high-performance batch ingestion
+            logger.info(f"📦 Batch ingesting {len(documents)} documents into GraphMem...")
+            gm_ingest_start = time.time()
+            
+            try:
+                # High-performance batch ingestion with 10 workers
+                # Infinite retry on rate limits - will never fail
+                batch_result = gm.ingest_batch(
+                    documents=documents,
+                    max_workers=10,    # Hardcoded 10 workers
+                    show_progress=True,
+                    auto_scale=False,  # Disabled
+                    aggressive=True,   # Infinite retry on rate limits
+                )
+                gm_ingest_errors = batch_result.get("documents_failed", 0)
+                gm_docs_processed = batch_result.get("documents_processed", 0)
+                throughput = batch_result.get("throughput_docs_per_sec", 0)
+                logger.info(f"   Batch stats: {gm_docs_processed} processed, {gm_ingest_errors} failed, {throughput:.2f} docs/sec")
+                
+            except Exception as e:
+                logger.warning(f"   Batch ingestion failed, falling back to sequential: {e}")
+                # Fall back to sequential
+                gm_ingest_errors = 0
+                for i, doc in enumerate(documents):
+                    try:
+                        gm.ingest(doc["content"])
+                        if (i + 1) % 10 == 0:
+                            logger.info(f"   GraphMem: {i+1}/{len(documents)} docs")
+                    except Exception as e:
+                        gm_ingest_errors += 1
+                        logger.warning(f"   ⚠️ GraphMem ingest error [{i+1}]: {str(e)[:100]}")
+            
+            gm_ingest_time = time.time() - gm_ingest_start
+            logger.info(f"✅ GraphMem ingestion complete: {gm_ingest_time:.1f}s ({gm_ingest_errors} errors)")
+            
+            # Save memory to Turso
+            with Timer("Save memory to Turso"):
+                try:
+                    gm.save()
+                    logger.info(f"   Memory saved to: {self.turso_db_path}")
                 except Exception as e:
-                    gm_ingest_errors += 1
-                    logger.warning(f"   ⚠️ GraphMem ingest error [{i+1}]: {str(e)[:100]}")
-        
-        gm_ingest_time = time.time() - gm_ingest_start
-        logger.info(f"✅ GraphMem ingestion complete: {gm_ingest_time:.1f}s ({gm_ingest_errors} errors)")
-        
-        # Save memory to Turso
-        with Timer("Save memory to Turso"):
-            try:
-                gm.save()
-                logger.info(f"   Memory saved to: {self.turso_db_path}")
-            except Exception as e:
-                logger.warning(f"   Could not save memory: {e}")
-        
-        # Naive RAG ingestion
-        logger.info("📦 Ingesting into Naive RAG...")
-        rag_ingest_start = time.time()
-        rag_ingest_errors = 0
-        
-        for i, doc in enumerate(corpus_sample):
-            try:
-                rag.ingest(doc)
-                if (i + 1) % 50 == 0:
-                    logger.info(f"   Naive RAG: {i+1}/{len(corpus_sample)} docs")
-            except Exception as e:
-                rag_ingest_errors += 1
-                logger.warning(f"   ⚠️ RAG ingest error [{i+1}]: {str(e)[:100]}")
-        
-        rag_ingest_time = time.time() - rag_ingest_start
-        logger.info(f"✅ Naive RAG ingestion complete: {rag_ingest_time:.1f}s ({rag_ingest_errors} errors)")
+                    logger.warning(f"   Could not save memory: {e}")
+            
+            # Naive RAG ingestion
+            logger.info("📦 Ingesting into Naive RAG...")
+            rag_ingest_start = time.time()
+            rag_ingest_errors = 0
+            
+            for i, doc in enumerate(corpus_sample):
+                try:
+                    rag.ingest(doc)
+                    if (i + 1) % 50 == 0:
+                        logger.info(f"   Naive RAG: {i+1}/{len(corpus_sample)} docs")
+                except Exception as e:
+                    rag_ingest_errors += 1
+                    logger.warning(f"   ⚠️ RAG ingest error [{i+1}]: {str(e)[:100]}")
+            
+            rag_ingest_time = time.time() - rag_ingest_start
+            logger.info(f"✅ Naive RAG ingestion complete: {rag_ingest_time:.1f}s ({rag_ingest_errors} errors)")
         
         # ==================== PHASE 4: Run Queries ====================
         logger.info(f"📊 PHASE 4: Running {len(qa_sample)} queries")
@@ -675,6 +697,7 @@ EXAMPLES:
     parser.add_argument("--corpus-docs", type=int, default=100, help="Number of corpus docs")
     parser.add_argument("--qa-samples", type=int, default=50, help="Number of QA samples")
     parser.add_argument("--full", action="store_true", help="Run full evaluation (609 docs, 2556 QA)")
+    parser.add_argument("--skip-ingestion", action="store_true", help="Skip ingestion, reuse existing Turso database")
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose logging")
     
     args = parser.parse_args()
@@ -756,6 +779,7 @@ EXAMPLES:
         n_corpus_docs=n_corpus,
         n_qa_samples=n_qa,
         seed=42,
+        skip_ingestion=args.skip_ingestion,
     )
     
     # Save results
