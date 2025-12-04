@@ -674,6 +674,7 @@ class GraphMem:
         show_progress: bool = True,
         auto_scale: bool = True,
         aggressive: bool = False,
+        rebuild_communities: bool = True,
     ) -> Dict[str, Any]:
         """
         High-performance batch ingestion using concurrent processing.
@@ -738,27 +739,38 @@ class GraphMem:
         total_relationships = 0
         
         def ingest_single(doc):
-            """Ingest a single document with infinite retry for rate limits."""
+            """
+            Fast-path ingestion for a single document:
+            - Extract (LLM + embeddings) off-lock
+            - Accumulate nodes/edges for batch merge
+            - Infinite retry on rate limits
+            """
             nonlocal processed, failed, total_entities, total_relationships
             
             doc_id = doc.get("id", "unknown")
             content = doc.get("content", doc.get("text", ""))
+            metadata = {k: v for k, v in doc.items() if k not in ("id", "content", "text")}
             
-            # Infinite retry for rate limits (429 errors)
             base_delay = 2  # seconds
             max_delay = 60  # cap at 60 seconds
             attempt = 0
             
             while True:
                 try:
-                    result = self.ingest(content, progress_callback=None)
+                    nodes, edges = self._knowledge_graph.extract(
+                        content=content,
+                        metadata=metadata,
+                        memory_id=self.memory_id,
+                        user_id=self.user_id,
+                        progress_callback=None,
+                    )
                     
                     with results_lock:
                         processed += 1
-                        total_entities += result.get("entities", 0)
-                        total_relationships += result.get("relationships", 0)
+                        total_entities += len(nodes)
+                        total_relationships += len(edges)
                     
-                    return {"success": True, "doc_id": doc_id}
+                    return {"success": True, "doc_id": doc_id, "nodes": nodes, "edges": edges}
                     
                 except Exception as e:
                     error_str = str(e).lower()
@@ -767,7 +779,6 @@ class GraphMem:
                     is_rate_limit = any(x in error_str for x in ['429', 'rate limit', 'too many requests', 'quota', 'retry'])
                     
                     if is_rate_limit:
-                        # Exponential backoff with cap: 2, 4, 8, 16, 32, 60, 60, 60...
                         delay = min(base_delay * (2 ** attempt), max_delay)
                         attempt += 1
                         if show_progress:
@@ -779,8 +790,8 @@ class GraphMem:
                     with results_lock:
                         failed += 1
                     
-                    logger.warning(f"   ⚠️ Failed to ingest {doc_id}: {str(e)[:80]}")
-                    return {"success": False, "doc_id": doc_id, "error": str(e)}
+                    logger.warning(f"   ⚠️ Failed to ingest {doc_id}: {str(e)[:160]}")
+                    return {"success": False, "doc_id": doc_id, "error": str(e), "nodes": [], "edges": []}
         
         # Process documents in parallel
         results = []
@@ -802,6 +813,46 @@ class GraphMem:
                     logger.error(f"   Document {idx} failed: {e}")
                     failed += 1
         
+        # Merge all successful nodes/edges with a single lock and optional community rebuild
+        merged_nodes = []
+        merged_edges = []
+        for r in results:
+            if r.get("success"):
+                merged_nodes.extend(r.get("nodes", []))
+                merged_edges.extend(r.get("edges", []))
+        
+        clusters = []
+        if merged_nodes or merged_edges:
+            with self._memory_lock:
+                # Add nodes/edges
+                for node in merged_nodes:
+                    self._memory.add_node(node)
+                for edge in merged_edges:
+                    self._memory.add_edge(edge)
+                
+                # Optionally rebuild communities once per batch
+                if rebuild_communities:
+                    clusters = self._community_detector.detect(
+                        nodes=list(self._memory.nodes.copy().values()),
+                        edges=list(self._memory.edges.copy().values()),
+                        memory_id=self.memory_id,
+                    )
+                    for cluster in clusters:
+                        self._memory.add_cluster(cluster)
+                
+                # Persist to storage
+                self._graph_store.save_memory(self._memory)
+                
+                # Invalidate cache (multi-tenant safe)
+                if self._cache:
+                    self._cache.invalidate(self.memory_id, user_id=self.user_id)
+                
+                # Update metrics
+                self._metrics["ingestions"] += processed
+                self._metrics["total_nodes"] = len(self._memory.nodes)
+                self._metrics["total_edges"] = len(self._memory.edges)
+                self._metrics["total_clusters"] = len(self._memory.clusters)
+        
         elapsed = time.time() - start_time
         throughput = len(documents) / elapsed if elapsed > 0 else 0
         
@@ -818,6 +869,7 @@ class GraphMem:
             "documents_failed": failed,
             "total_entities": total_entities,
             "total_relationships": total_relationships,
+            "clusters_built": len(clusters),
             "elapsed_seconds": elapsed,
             "throughput_docs_per_sec": throughput,
         }

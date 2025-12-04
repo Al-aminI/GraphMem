@@ -82,12 +82,6 @@ class EntityResolver:
         self._entity_index: Dict[str, EntityCandidate] = {}
         self._alias_lookup: Dict[str, str] = {}  # alias -> canonical key
         self._embedding_cache: Dict[str, np.ndarray] = {}
-        
-        # Thread-safety: resolve() is called from concurrent ingestion workers.
-        # We use fine-grained locks and snapshot/merge to minimize contention.
-        import threading
-        self._lock = threading.Lock()        # protects _entity_index / _alias_lookup
-        self._cache_lock = threading.Lock()  # protects _embedding_cache
     
     def resolve(
         self,
@@ -109,16 +103,10 @@ class EntityResolver:
         if not nodes:
             return []
         
-        # Snapshot global indexes to avoid holding the lock during heavy work
-        with self._lock:
-            index_snapshot = dict(self._entity_index)
-            alias_snapshot = dict(self._alias_lookup)
-        
-        # Local working copies
-        local_index = dict(index_snapshot)
-        local_alias = dict(alias_snapshot)
+        # Fast, per-instance resolution (resolver instances are not shared across threads)
+        local_index = self._entity_index
+        local_alias = self._alias_lookup
         resolved_nodes: List[MemoryNode] = []
-        touched_keys: Set[str] = set()
         
         for node in nodes:
             canonical, key = self._resolve_entity_from_maps(
@@ -131,7 +119,6 @@ class EntityResolver:
                 # Merge with existing canonical in local map
                 merged = self._merge_entities(canonical, node)
                 local_index[key] = merged
-                touched_keys.add(key)
                 
                 best_embedding = merged.embedding
                 if best_embedding is None and node.embedding is not None:
@@ -162,8 +149,7 @@ class EntityResolver:
                 candidate = self._create_candidate(node)
                 key = self._generate_key(node.name)
                 local_index[key] = candidate
-                self._register_alias_in_map(node.name, key, local_alias)
-                touched_keys.add(key)
+                self._register_alias(node.name, key)
                 
                 resolved_node = MemoryNode(
                     id=key,
@@ -181,14 +167,6 @@ class EntityResolver:
                     memory_id=memory_id,
                 )
                 resolved_nodes.append(resolved_node)
-        
-        # Merge local changes back into the shared indexes with minimal lock time
-        if touched_keys:
-            with self._lock:
-                for k in touched_keys:
-                    self._entity_index[k] = local_index[k]
-                # Merge aliases (local_alias has all mappings)
-                self._alias_lookup.update(local_alias)
         
         logger.info(f"Resolved {len(nodes)} nodes to {len(resolved_nodes)} unique entities")
         return resolved_nodes
@@ -266,14 +244,14 @@ class EntityResolver:
         
         return None, None
 
-    # ---------- Snapshot-based resolution helpers (thread-safe & fast) ----------
+    # ---------- Resolution helper using provided maps ----------
     def _resolve_entity_from_maps(
         self,
         node: MemoryNode,
         index_map: Dict[str, EntityCandidate],
         alias_map: Dict[str, str],
     ) -> Tuple[Optional[EntityCandidate], Optional[str]]:
-        """Resolve using provided maps (no locking, used on local snapshots)."""
+        """Resolve using provided maps."""
         cleaned_name = self._clean_name(node.name)
         tokens = self._tokenize(cleaned_name)
         
@@ -288,8 +266,8 @@ class EntityResolver:
         if slug_key and slug_key in index_map:
             return index_map[slug_key], slug_key
         
-        # Get embedding for semantic comparison
-        embedding = self._get_embedding_threadsafe(node.description or cleaned_name)
+        # Get embedding for semantic comparison (cache is per-resolver instance)
+        embedding = self._get_embedding(node.description or cleaned_name)
         
         best_match = None
         best_score = 0.0
@@ -332,32 +310,6 @@ class EntityResolver:
         
         return None, None
     
-    def _register_alias_in_map(self, alias: str, canonical_key: str, alias_map: Dict[str, str]) -> None:
-        """Register alias in a given alias_map (used for snapshots)."""
-        if not alias:
-            return
-        lowered = alias.lower()
-        alias_map[lowered] = canonical_key
-        
-        slug = re.sub(r'[^a-z0-9]', '', lowered)
-        if slug:
-            alias_map.setdefault(slug, canonical_key)
-    
-    def _get_embedding_threadsafe(self, text: str) -> Optional[np.ndarray]:
-        """Thread-safe embedding cache access."""
-        if not text or not text.strip():
-            return None
-        
-        cache_key = text[:500].lower()
-        with self._cache_lock:
-            if cache_key in self._embedding_cache:
-                return self._embedding_cache[cache_key]
-        
-        embedding = self._get_embedding(text)
-        if embedding is not None:
-            with self._cache_lock:
-                self._embedding_cache[cache_key] = embedding
-        return embedding
     
     def _create_candidate(self, node: MemoryNode) -> EntityCandidate:
         """Create an entity candidate from a node."""
