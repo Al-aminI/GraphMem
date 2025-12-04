@@ -9,6 +9,11 @@ Best for production benchmarking with full graph capabilities.
 Uses MultiHopRAG dataset from HuggingFace:
 - 2556 multi-hop QA samples
 - 609 news article corpus
+
+Supports:
+- OpenRouter (default)
+- Azure OpenAI
+- Direct OpenAI
 """
 
 import os
@@ -16,6 +21,7 @@ import sys
 import json
 import time
 import random
+import logging
 import numpy as np
 from datetime import datetime
 from dataclasses import dataclass, field, asdict
@@ -23,6 +29,33 @@ from typing import List, Dict, Any, Optional
 
 # Add graphmem to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+
+# Configure logging with timestamps
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s | %(levelname)7s | %(message)s',
+    datefmt='%H:%M:%S'
+)
+logger = logging.getLogger(__name__)
+
+
+class Timer:
+    """Context manager for timing operations."""
+    def __init__(self, name: str, log: bool = True):
+        self.name = name
+        self.log = log
+        self.elapsed = 0
+    
+    def __enter__(self):
+        self.start = time.time()
+        if self.log:
+            logger.info(f"⏱️  START: {self.name}")
+        return self
+    
+    def __exit__(self, *args):
+        self.elapsed = time.time() - self.start
+        if self.log:
+            logger.info(f"✅ DONE:  {self.name} ({self.elapsed:.2f}s)")
 
 
 @dataclass
@@ -115,6 +148,11 @@ class Neo4jEvaluator:
     - Neo4j Graph Database (HNSW vector index)
     - Redis caching (query + embedding cache)
     - Full graph capabilities (PageRank, etc.)
+    
+    Supports providers:
+    - openai_compatible (OpenRouter, vLLM, etc.)
+    - azure (Azure OpenAI)
+    - openai (Direct OpenAI)
     """
     
     def __init__(
@@ -128,6 +166,14 @@ class Neo4jEvaluator:
         neo4j_password: str = None,
         redis_url: str = None,
         data_dir: str = None,
+        # Provider configuration
+        llm_provider: str = "openai_compatible",
+        embedding_provider: str = "openai_compatible",
+        # Azure-specific
+        azure_endpoint: str = None,
+        azure_api_version: str = "2024-12-01-preview",
+        azure_deployment: str = None,
+        azure_embedding_deployment: str = None,
     ):
         self.api_key = api_key
         self.api_base = api_base
@@ -138,12 +184,27 @@ class Neo4jEvaluator:
         self.neo4j_password = neo4j_password
         self.redis_url = redis_url
         
+        # Provider config
+        self.llm_provider = llm_provider
+        self.embedding_provider = embedding_provider
+        self.azure_endpoint = azure_endpoint
+        self.azure_api_version = azure_api_version
+        self.azure_deployment = azure_deployment
+        self.azure_embedding_deployment = azure_embedding_deployment
+        
         if data_dir is None:
             data_dir = os.path.join(os.path.dirname(__file__), 'data')
         self.data_dir = data_dir
         
-        self.corpus = self._load_corpus()
-        self.qa_samples = self._load_qa()
+        logger.info(f"📂 Loading dataset from: {self.data_dir}")
+        with Timer("Load corpus"):
+            self.corpus = self._load_corpus()
+        logger.info(f"   Loaded {len(self.corpus)} corpus documents")
+        
+        with Timer("Load QA samples"):
+            self.qa_samples = self._load_qa()
+        logger.info(f"   Loaded {len(self.qa_samples)} QA samples")
+        
         self.results: List[EvalResult] = []
     
     def _load_corpus(self) -> List[Dict]:
@@ -169,41 +230,98 @@ class Neo4jEvaluator:
         from graphmem.llm.providers import LLMProvider
         from graphmem.llm.embeddings import EmbeddingProvider
         
-        llm = LLMProvider(
-            provider="openai_compatible",
-            api_key=self.api_key,
-            api_base=self.api_base,
-            model=self.llm_model,
-        )
-        emb = EmbeddingProvider(
-            provider="openai_compatible",
-            api_key=self.api_key,
-            api_base=self.api_base,
-            model=self.embedding_model,
-        )
+        logger.info(f"🤖 Initializing LLM: {self.llm_provider}/{self.llm_model}")
+        
+        # Build LLM config based on provider
+        if self.llm_provider == "azure":
+            llm = LLMProvider(
+                provider="azure",
+                api_key=self.api_key,
+                api_base=self.azure_endpoint,
+                model=self.azure_deployment or self.llm_model,
+                azure_api_version=self.azure_api_version,
+            )
+        else:
+            llm = LLMProvider(
+                provider=self.llm_provider,
+                api_key=self.api_key,
+                api_base=self.api_base,
+                model=self.llm_model,
+            )
+        
+        logger.info(f"🔢 Initializing Embeddings: {self.embedding_provider}/{self.embedding_model}")
+        
+        # Build Embedding config based on provider
+        if self.embedding_provider == "azure":
+            emb = EmbeddingProvider(
+                provider="azure",
+                api_key=self.api_key,
+                api_base=self.azure_endpoint,
+                model=self.azure_embedding_deployment or self.embedding_model,
+                azure_api_version=self.azure_api_version,
+            )
+        else:
+            emb = EmbeddingProvider(
+                provider=self.embedding_provider,
+                api_key=self.api_key,
+                api_base=self.api_base,
+                model=self.embedding_model,
+            )
+        
         return NaiveRAG(emb, llm)
     
     def _init_graphmem(self):
         """Initialize GraphMem with NEO4J + REDIS backend."""
         from graphmem import GraphMem, MemoryConfig
         
-        config = MemoryConfig(
-            llm_provider="openai_compatible",
-            llm_api_key=self.api_key,
-            llm_api_base=self.api_base,
-            llm_model=self.llm_model,
-            embedding_provider="openai_compatible",
-            embedding_api_key=self.api_key,
-            embedding_api_base=self.api_base,
-            embedding_model=self.embedding_model,
-            # NEO4J backend
-            neo4j_uri=self.neo4j_uri,
-            neo4j_username=self.neo4j_username,
-            neo4j_password=self.neo4j_password,
-            # REDIS caching
-            redis_url=self.redis_url,
-            redis_ttl=3600,
-        )
+        logger.info(f"🔧 Building MemoryConfig...")
+        logger.info(f"   LLM Provider: {self.llm_provider}")
+        logger.info(f"   LLM Model: {self.llm_model}")
+        logger.info(f"   Embedding Provider: {self.embedding_provider}")
+        logger.info(f"   Embedding Model: {self.embedding_model}")
+        logger.info(f"   Neo4j URI: {self.neo4j_uri or 'Not configured (using InMemory)'}")
+        logger.info(f"   Redis URL: {'Configured' if self.redis_url else 'Not configured'}")
+        
+        # Build config based on provider
+        if self.llm_provider == "azure":
+            config = MemoryConfig(
+                llm_provider="azure",
+                llm_api_key=self.api_key,
+                llm_api_base=self.azure_endpoint,
+                llm_model=self.azure_deployment or self.llm_model,
+                azure_api_version=self.azure_api_version,
+                embedding_provider="azure" if self.embedding_provider == "azure" else self.embedding_provider,
+                embedding_api_key=self.api_key,
+                embedding_api_base=self.azure_endpoint if self.embedding_provider == "azure" else self.api_base,
+                embedding_model=self.azure_embedding_deployment or self.embedding_model,
+                # NEO4J backend
+                neo4j_uri=self.neo4j_uri,
+                neo4j_username=self.neo4j_username,
+                neo4j_password=self.neo4j_password,
+                # REDIS caching
+                redis_url=self.redis_url,
+                redis_ttl=3600,
+            )
+        else:
+            config = MemoryConfig(
+                llm_provider=self.llm_provider,
+                llm_api_key=self.api_key,
+                llm_api_base=self.api_base,
+                llm_model=self.llm_model,
+                embedding_provider=self.embedding_provider,
+                embedding_api_key=self.api_key,
+                embedding_api_base=self.api_base,
+                embedding_model=self.embedding_model,
+                # NEO4J backend
+                neo4j_uri=self.neo4j_uri,
+                neo4j_username=self.neo4j_username,
+                neo4j_password=self.neo4j_password,
+                # REDIS caching
+                redis_url=self.redis_url,
+                redis_ttl=3600,
+            )
+        
+        logger.info(f"🚀 Creating GraphMem instance...")
         return GraphMem(config, user_id="eval_user", memory_id="multihoprag")
     
     def _check_answer(self, predicted: str, expected: str) -> bool:

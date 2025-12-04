@@ -114,6 +114,11 @@ class MemoryConfig:
     llm_temperature: float = 0.1
     llm_max_tokens: int = 8000
     
+    # Azure OpenAI Configuration (used when llm_provider="azure_openai")
+    azure_api_version: str = field(default_factory=lambda: os.getenv("AZURE_OPENAI_API_VERSION", "2024-12-01-preview"))
+    azure_deployment: Optional[str] = field(default_factory=lambda: os.getenv("AZURE_OPENAI_DEPLOYMENT"))  # LLM deployment name
+    azure_embedding_deployment: Optional[str] = field(default_factory=lambda: os.getenv("AZURE_EMBEDDING_DEPLOYMENT"))  # Embedding deployment
+    
     # Embedding Configuration
     embedding_provider: str = field(default_factory=lambda: os.getenv("GRAPHMEM_EMBEDDING_PROVIDER", "openai"))
     embedding_model: str = field(default_factory=lambda: os.getenv("GRAPHMEM_EMBEDDING_MODEL", "text-embedding-3-small"))
@@ -329,12 +334,18 @@ class GraphMem:
         from graphmem.evolution.memory_evolution import MemoryEvolution
         
         # Initialize LLM
-        self._llm = get_llm_provider(
-            provider=self.config.llm_provider,
-            model=self.config.llm_model,
-            api_key=self.config.llm_api_key,
-            api_base=self.config.llm_api_base,
-        )
+        llm_kwargs = {
+            "provider": self.config.llm_provider,
+            "model": self.config.llm_model,
+            "api_key": self.config.llm_api_key,
+            "api_base": self.config.llm_api_base,
+        }
+        # Add Azure-specific config if using Azure
+        if self.config.llm_provider == "azure_openai":
+            llm_kwargs["api_version"] = self.config.azure_api_version
+            llm_kwargs["deployment"] = self.config.azure_deployment or self.config.llm_model
+        
+        self._llm = get_llm_provider(**llm_kwargs)
         
         # Initialize cache (Redis > Turso > InMemory)
         # Cache must be initialized BEFORE embeddings so embeddings can use it
@@ -373,13 +384,19 @@ class GraphMem:
             self._cache = InMemoryCache(ttl=self.config.redis_ttl)
         
         # Initialize embeddings (with cache for embedding reuse)
-        self._embeddings = get_embedding_provider(
-            provider=self.config.embedding_provider,
-            model=self.config.embedding_model,
-            api_key=self.config.embedding_api_key,
-            api_base=self.config.embedding_api_base,
-            cache=self._cache,  # Pass cache for embedding caching
-        )
+        emb_kwargs = {
+            "provider": self.config.embedding_provider,
+            "model": self.config.embedding_model,
+            "api_key": self.config.embedding_api_key,
+            "api_base": self.config.embedding_api_base,
+            "cache": self._cache,  # Pass cache for embedding caching
+        }
+        # Add Azure-specific config if using Azure embeddings
+        if self.config.embedding_provider == "azure_openai":
+            emb_kwargs["api_version"] = self.config.azure_api_version
+            emb_kwargs["deployment"] = self.config.azure_embedding_deployment or self.config.embedding_model
+        
+        self._embeddings = get_embedding_provider(**emb_kwargs)
         
         # Initialize storage (Neo4j > Turso > InMemory)
         # Priority: Neo4j (full graph), Turso (SQLite persistent), InMemory (default)
