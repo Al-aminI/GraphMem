@@ -215,8 +215,8 @@ class TursoStore:
             json.dumps(getattr(memory, 'metadata', {}) or {})
         ))
         
-        # Save nodes (create copy to avoid dict changed size during iteration)
-        nodes_snapshot = list(memory.nodes.items())
+        # Save nodes (use dict.copy() to safely avoid concurrent modification)
+        nodes_snapshot = list(memory.nodes.copy().items())
         for node_id, node in nodes_snapshot:
             # Convert importance to float/int if it's an enum
             importance_val = node.importance
@@ -283,8 +283,8 @@ class TursoStore:
                     metadata_json
                 ))
         
-        # Save edges (create copy to avoid dict changed size during iteration)
-        edges_snapshot = list(memory.edges.items())
+        # Save edges (use dict.copy() to safely avoid concurrent modification)
+        edges_snapshot = list(memory.edges.copy().items())
         for edge_id, edge in edges_snapshot:
             # Convert datetime objects to ISO strings
             valid_from_str = None
@@ -321,8 +321,8 @@ class TursoStore:
                 json.dumps(edge.properties) if hasattr(edge, 'properties') and edge.properties else None
             ))
         
-        # Save clusters (create copy to avoid dict changed size during iteration)
-        clusters_snapshot = list(memory.clusters.items())
+        # Save clusters (use dict.copy() to safely avoid concurrent modification)
+        clusters_snapshot = list(memory.clusters.copy().items())
         for cluster_id, cluster in clusters_snapshot:
             cursor.execute("""
                 INSERT OR REPLACE INTO clusters

@@ -149,14 +149,14 @@ class Neo4jStore:
             write=True,
         )
         
-        # Save nodes in batches
-        self._save_nodes_batch(memory.id, list(memory.nodes.values()))
+        # Save nodes in batches (use dict.copy() to avoid concurrent modification)
+        self._save_nodes_batch(memory.id, list(memory.nodes.copy().values()))
         
-        # Save edges in batches
-        self._save_edges_batch(memory.id, list(memory.edges.values()))
+        # Save edges in batches (use dict.copy() to avoid concurrent modification)
+        self._save_edges_batch(memory.id, list(memory.edges.copy().values()))
         
-        # Save clusters
-        self._save_clusters(memory.id, list(memory.clusters.values()))
+        # Save clusters (use dict.copy() to avoid concurrent modification)
+        self._save_clusters(memory.id, list(memory.clusters.copy().values()))
         
         logger.info(f"Saved memory {memory.id}: {len(memory.nodes)} nodes, {len(memory.edges)} edges")
     

@@ -589,6 +589,11 @@ class GraphMem:
             
             # Thread-safe memory modification
             with self._memory_lock:
+                # FIRST: Snapshot existing data before any modifications
+                # This avoids "dictionary changed size during iteration" errors
+                existing_node_ids = set(self._memory.nodes.keys())
+                existing_edge_ids = set(self._memory.edges.keys())
+                
                 # Add to memory
                 for node in nodes:
                     node.importance = importance
@@ -601,10 +606,15 @@ class GraphMem:
                 if progress_callback:
                     progress_callback("building_communities", 0.8)
                 
-                # Rebuild communities (iterates over nodes/edges)
+                # Create safe copies for community detection
+                # Use dict.copy() + values() which is safer than list(values())
+                nodes_snapshot = list(self._memory.nodes.copy().values())
+                edges_snapshot = list(self._memory.edges.copy().values())
+                
+                # Rebuild communities with snapshot copies
                 clusters = self._community_detector.detect(
-                    nodes=list(self._memory.nodes.values()),
-                    edges=list(self._memory.edges.values()),
+                    nodes=nodes_snapshot,
+                    edges=edges_snapshot,
                     memory_id=self.memory_id,
                 )
                 
@@ -1105,14 +1115,18 @@ class GraphMem:
         """
         self._ensure_initialized()
         
-        # Thread-safe iteration over memory dictionaries
+        # Thread-safe iteration - use dict.copy() to avoid concurrent modification
         with self._memory_lock:
-            return {
-                "memory_id": self.memory_id,
-                "nodes": [n.to_dict() for n in self._memory.nodes.values()],
-                "edges": [e.to_dict() for e in self._memory.edges.values()],
-                "clusters": [c.to_dict() for c in self._memory.clusters.values()],
-            }
+            nodes_copy = self._memory.nodes.copy()
+            edges_copy = self._memory.edges.copy()
+            clusters_copy = self._memory.clusters.copy()
+        
+        return {
+            "memory_id": self.memory_id,
+            "nodes": [n.to_dict() for n in nodes_copy.values()],
+            "edges": [e.to_dict() for e in edges_copy.values()],
+            "clusters": [c.to_dict() for c in clusters_copy.values()],
+        }
     
     def clear(self) -> None:
         """Clear all memory data."""
