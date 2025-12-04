@@ -254,6 +254,7 @@ class GraphMem:
         
         self._initialized = False
         self._init_lock = threading.Lock()
+        self._memory_lock = threading.Lock()  # Thread-safe access to memory dictionaries
         
         # Components (lazy-initialized)
         self._graph_store = None
@@ -586,45 +587,47 @@ class GraphMem:
             if progress_callback:
                 progress_callback("resolving_entities", 0.6)
             
-            # Add to memory
-            for node in nodes:
-                node.importance = importance
-                self._memory.add_node(node)
-            
-            for edge in edges:
-                edge.importance = importance
-                self._memory.add_edge(edge)
-            
-            if progress_callback:
-                progress_callback("building_communities", 0.8)
-            
-            # Rebuild communities
-            clusters = self._community_detector.detect(
-                nodes=list(self._memory.nodes.values()),
-                edges=list(self._memory.edges.values()),
-                memory_id=self.memory_id,
-            )
-            
-            for cluster in clusters:
-                self._memory.add_cluster(cluster)
-            
-            if progress_callback:
-                progress_callback("persisting", 0.9)
-            
-            # Persist to storage
-            self._graph_store.save_memory(self._memory)
-            
-            # Invalidate cache (multi-tenant safe)
-            if self._cache:
-                self._cache.invalidate(self.memory_id, user_id=self.user_id)
-            
-            elapsed = time.time() - start_time
-            
-            # Update metrics
-            self._metrics["ingestions"] += 1
-            self._metrics["total_nodes"] = len(self._memory.nodes)
-            self._metrics["total_edges"] = len(self._memory.edges)
-            self._metrics["total_clusters"] = len(self._memory.clusters)
+            # Thread-safe memory modification
+            with self._memory_lock:
+                # Add to memory
+                for node in nodes:
+                    node.importance = importance
+                    self._memory.add_node(node)
+                
+                for edge in edges:
+                    edge.importance = importance
+                    self._memory.add_edge(edge)
+                
+                if progress_callback:
+                    progress_callback("building_communities", 0.8)
+                
+                # Rebuild communities (iterates over nodes/edges)
+                clusters = self._community_detector.detect(
+                    nodes=list(self._memory.nodes.values()),
+                    edges=list(self._memory.edges.values()),
+                    memory_id=self.memory_id,
+                )
+                
+                for cluster in clusters:
+                    self._memory.add_cluster(cluster)
+                
+                if progress_callback:
+                    progress_callback("persisting", 0.9)
+                
+                # Persist to storage
+                self._graph_store.save_memory(self._memory)
+                
+                # Invalidate cache (multi-tenant safe)
+                if self._cache:
+                    self._cache.invalidate(self.memory_id, user_id=self.user_id)
+                
+                elapsed = time.time() - start_time
+                
+                # Update metrics
+                self._metrics["ingestions"] += 1
+                self._metrics["total_nodes"] = len(self._memory.nodes)
+                self._metrics["total_edges"] = len(self._memory.edges)
+                self._metrics["total_clusters"] = len(self._memory.clusters)
             
             if progress_callback:
                 progress_callback("complete", 1.0)
@@ -954,10 +957,11 @@ class GraphMem:
             response.latency_ms = (time.time() - start_time) * 1000
             self._metrics["queries"] += 1
             
-            # Record access on retrieved nodes
-            for node in response.nodes:
-                if node.id in self._memory.nodes:
-                    self._memory.nodes[node.id] = node.record_access()
+            # Record access on retrieved nodes (thread-safe)
+            with self._memory_lock:
+                for node in response.nodes:
+                    if node.id in self._memory.nodes:
+                        self._memory.nodes[node.id] = node.record_access()
             
             logger.info(f"Query completed: '{query[:50]}...' -> {len(response.nodes)} nodes")
             
@@ -1098,12 +1102,14 @@ class GraphMem:
         """
         self._ensure_initialized()
         
-        return {
-            "memory_id": self.memory_id,
-            "nodes": [n.to_dict() for n in self._memory.nodes.values()],
-            "edges": [e.to_dict() for e in self._memory.edges.values()],
-            "clusters": [c.to_dict() for c in self._memory.clusters.values()],
-        }
+        # Thread-safe iteration over memory dictionaries
+        with self._memory_lock:
+            return {
+                "memory_id": self.memory_id,
+                "nodes": [n.to_dict() for n in self._memory.nodes.values()],
+                "edges": [e.to_dict() for e in self._memory.edges.values()],
+                "clusters": [c.to_dict() for c in self._memory.clusters.values()],
+            }
     
     def clear(self) -> None:
         """Clear all memory data."""
