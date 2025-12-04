@@ -82,6 +82,12 @@ class EntityResolver:
         self._entity_index: Dict[str, EntityCandidate] = {}
         self._alias_lookup: Dict[str, str] = {}  # alias -> canonical key
         self._embedding_cache: Dict[str, np.ndarray] = {}
+        
+        # Thread-safety: resolve() is called from concurrent ingestion workers.
+        # We protect all mutations/iterations over the internal indexes with this lock
+        # to avoid "dictionary changed size during iteration".
+        import threading
+        self._lock = threading.Lock()
     
     def resolve(
         self,
@@ -103,69 +109,71 @@ class EntityResolver:
         if not nodes:
             return []
         
-        resolved_nodes = []
-        
-        for node in nodes:
-            canonical, key = self._resolve_entity(node)
+        # Serialize resolve to protect internal dictionaries from concurrent mutation
+        with self._lock:
+            resolved_nodes = []
             
-            if canonical:
-                # Merge with existing
-                merged = self._merge_entities(canonical, node)
-                self._entity_index[key] = merged
+            for node in nodes:
+                canonical, key = self._resolve_entity(node)
                 
-                # Use best embedding (prefer non-None, then node's)
-                best_embedding = merged.embedding
-                if best_embedding is None and node.embedding is not None:
-                    best_embedding = np.array(node.embedding) if isinstance(node.embedding, list) else node.embedding
-                
-                # Update the node with canonical info
-                resolved_node = MemoryNode(
-                    id=key,  # Use canonical key as ID
-                    name=merged.name,
-                    entity_type=merged.entity_type or node.entity_type,
-                    description=self._best_description(merged.descriptions),
-                    canonical_name=merged.name,
-                    aliases=merged.aliases,
-                    embedding=list(best_embedding) if best_embedding is not None else None,  # Preserve embedding!
-                    properties={
-                        **node.properties,
-                        "canonical_name": merged.name,
-                        "aliases": list(merged.aliases),
-                        "occurrence_count": merged.occurrences,
-                    },
-                    user_id=user_id,  # Multi-tenant isolation
-                    memory_id=memory_id,
-                )
-                
-                # Only add if not already in resolved
-                if not any(n.id == resolved_node.id for n in resolved_nodes):
+                if canonical:
+                    # Merge with existing
+                    merged = self._merge_entities(canonical, node)
+                    self._entity_index[key] = merged
+                    
+                    # Use best embedding (prefer non-None, then node's)
+                    best_embedding = merged.embedding
+                    if best_embedding is None and node.embedding is not None:
+                        best_embedding = np.array(node.embedding) if isinstance(node.embedding, list) else node.embedding
+                    
+                    # Update the node with canonical info
+                    resolved_node = MemoryNode(
+                        id=key,  # Use canonical key as ID
+                        name=merged.name,
+                        entity_type=merged.entity_type or node.entity_type,
+                        description=self._best_description(merged.descriptions),
+                        canonical_name=merged.name,
+                        aliases=merged.aliases,
+                        embedding=list(best_embedding) if best_embedding is not None else None,  # Preserve embedding!
+                        properties={
+                            **node.properties,
+                            "canonical_name": merged.name,
+                            "aliases": list(merged.aliases),
+                            "occurrence_count": merged.occurrences,
+                        },
+                        user_id=user_id,  # Multi-tenant isolation
+                        memory_id=memory_id,
+                    )
+                    
+                    # Only add if not already in resolved
+                    if not any(n.id == resolved_node.id for n in resolved_nodes):
+                        resolved_nodes.append(resolved_node)
+                else:
+                    # New entity
+                    candidate = self._create_candidate(node)
+                    key = self._generate_key(node.name)
+                    self._entity_index[key] = candidate
+                    self._register_alias(node.name, key)
+                    
+                    resolved_node = MemoryNode(
+                        id=key,
+                        name=node.name,
+                        entity_type=node.entity_type,
+                        description=node.description,
+                        canonical_name=node.name,
+                        aliases={node.name},
+                        embedding=node.embedding,  # Preserve embedding!
+                        properties={
+                            **node.properties,
+                            "canonical_name": node.name,
+                        },
+                        user_id=user_id,  # Multi-tenant isolation
+                        memory_id=memory_id,
+                    )
                     resolved_nodes.append(resolved_node)
-            else:
-                # New entity
-                candidate = self._create_candidate(node)
-                key = self._generate_key(node.name)
-                self._entity_index[key] = candidate
-                self._register_alias(node.name, key)
-                
-                resolved_node = MemoryNode(
-                    id=key,
-                    name=node.name,
-                    entity_type=node.entity_type,
-                    description=node.description,
-                    canonical_name=node.name,
-                    aliases={node.name},
-                    embedding=node.embedding,  # Preserve embedding!
-                    properties={
-                        **node.properties,
-                        "canonical_name": node.name,
-                    },
-                    user_id=user_id,  # Multi-tenant isolation
-                    memory_id=memory_id,
-                )
-                resolved_nodes.append(resolved_node)
-        
-        logger.info(f"Resolved {len(nodes)} nodes to {len(resolved_nodes)} unique entities")
-        return resolved_nodes
+            
+            logger.info(f"Resolved {len(nodes)} nodes to {len(resolved_nodes)} unique entities")
+            return resolved_nodes
     
     def _resolve_entity(
         self,
