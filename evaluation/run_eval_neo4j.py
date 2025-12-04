@@ -346,6 +346,7 @@ class Neo4jEvaluator:
         n_corpus_docs: int = 100,
         n_qa_samples: int = 50,
         seed: int = 42,
+        skip_ingestion: bool = False,
     ) -> BenchmarkSummary:
         """Run the evaluation with NEO4J + REDIS backend."""
         random.seed(seed)
@@ -361,6 +362,7 @@ class Neo4jEvaluator:
         print(f"   Backend: 🏢 NEO4J (Enterprise Graph + HNSW Vector)")
         print(f"   Neo4j: {self.neo4j_uri or 'Not configured'}")
         print(f"   Redis: {'Configured' if self.redis_url else 'Not configured'}")
+        print(f"   Skip Ingestion: {'✅ Yes (reusing existing data)' if skip_ingestion else '❌ No (fresh ingestion)'}")
         print("=" * 70)
         
         if not self.neo4j_uri:
@@ -369,54 +371,72 @@ class Neo4jEvaluator:
         corpus_sample = random.sample(self.corpus, min(n_corpus_docs, len(self.corpus)))
         qa_sample = random.sample(self.qa_samples, min(n_qa_samples, len(self.qa_samples)))
         
-        print("\n📦 Ingesting corpus into both systems...")
-        
-        # GraphMem with Neo4j - HIGH-PERFORMANCE BATCH INGESTION
-        print("   → GraphMem (Neo4j) - Batch Mode with Auto-Scaling...")
+        # Initialize GraphMem
         gm = self._init_graphmem()
         
-        # Prepare documents for batch ingestion
-        documents = []
-        for i, doc in enumerate(corpus_sample):
-            content = f"{doc.get('title', '')}\n{doc.get('body', '')}"
-            documents.append({
-                "id": f"doc_{i}",
-                "content": content[:10000],
-            })
-        
-        gm_ingest_start = time.time()
-        
-        try:
-            # High-performance batch ingestion with 10 workers
-            # Infinite retry on rate limits - will never fail
-            batch_result = gm.ingest_batch(
-                documents=documents,
-                max_workers=10,    # Hardcoded 10 workers
-                show_progress=True,
-                auto_scale=False,  # Disabled
-                aggressive=True,   # Infinite retry on rate limits
-            )
-            gm_ingest_errors = batch_result.get("documents_failed", 0)
-            gm_docs_processed = batch_result.get("documents_processed", 0)
-            throughput = batch_result.get("throughput_docs_per_sec", 0)
-            print(f"      Batch stats: {gm_docs_processed} processed, {gm_ingest_errors} failed, {throughput:.2f} docs/sec")
-        except Exception as e:
-            print(f"      Batch ingestion failed, falling back to sequential: {e}")
-            # Fallback to sequential
-            for i, doc in enumerate(documents):
+        if skip_ingestion:
+            print("\n📦 ⏭️  SKIPPING INGESTION (reusing existing Neo4j data)...")
+            gm_ingest_time = 0
+            
+            # Still need naive RAG for comparison
+            print("   → Naive RAG (for comparison)...")
+            rag = self._init_naive_rag()
+            rag_ingest_start = time.time()
+            for doc in corpus_sample:
                 try:
-                    gm.ingest(doc["content"])
-                except Exception as e2:
-                    print(f"      Warning: {e2}")
-                if (i + 1) % 20 == 0:
-                    print(f"      {i+1}/{len(documents)} docs ingested")
-        
-        gm_ingest_time = time.time() - gm_ingest_start
-        print(f"   → GraphMem ingestion: {gm_ingest_time:.1f}s")
-        
-        # Naive RAG
-        print("   → Naive RAG...")
-        rag = self._init_naive_rag()
+                    rag.ingest(doc)
+                except:
+                    pass
+            rag_ingest_time = time.time() - rag_ingest_start
+            print(f"   → Naive RAG ready: {rag_ingest_time:.1f}s")
+        else:
+            print("\n📦 Ingesting corpus into both systems...")
+            
+            # GraphMem with Neo4j - HIGH-PERFORMANCE BATCH INGESTION
+            print("   → GraphMem (Neo4j) - Batch Mode with Auto-Scaling...")
+            
+            # Prepare documents for batch ingestion
+            documents = []
+            for i, doc in enumerate(corpus_sample):
+                content = f"{doc.get('title', '')}\n{doc.get('body', '')}"
+                documents.append({
+                    "id": f"doc_{i}",
+                    "content": content[:10000],
+                })
+            
+            gm_ingest_start = time.time()
+            
+            try:
+                # High-performance batch ingestion with 10 workers
+                # Infinite retry on rate limits - will never fail
+                batch_result = gm.ingest_batch(
+                    documents=documents,
+                    max_workers=10,    # Hardcoded 10 workers
+                    show_progress=True,
+                    auto_scale=False,  # Disabled
+                    aggressive=True,   # Infinite retry on rate limits
+                )
+                gm_ingest_errors = batch_result.get("documents_failed", 0)
+                gm_docs_processed = batch_result.get("documents_processed", 0)
+                throughput = batch_result.get("throughput_docs_per_sec", 0)
+                print(f"      Batch stats: {gm_docs_processed} processed, {gm_ingest_errors} failed, {throughput:.2f} docs/sec")
+            except Exception as e:
+                print(f"      Batch ingestion failed, falling back to sequential: {e}")
+                # Fallback to sequential
+                for i, doc in enumerate(documents):
+                    try:
+                        gm.ingest(doc["content"])
+                    except Exception as e2:
+                        print(f"      Warning: {e2}")
+                    if (i + 1) % 20 == 0:
+                        print(f"      {i+1}/{len(documents)} docs ingested")
+            
+            gm_ingest_time = time.time() - gm_ingest_start
+            print(f"   → GraphMem ingestion: {gm_ingest_time:.1f}s")
+            
+            # Naive RAG
+            print("   → Naive RAG...")
+            rag = self._init_naive_rag()
         rag_ingest_start = time.time()
         for doc in corpus_sample:
             try:
@@ -600,6 +620,7 @@ def main():
     parser.add_argument("--corpus-docs", type=int, default=100, help="Number of corpus docs to use")
     parser.add_argument("--qa-samples", type=int, default=50, help="Number of QA samples to test")
     parser.add_argument("--full", action="store_true", help="Run full evaluation (609 docs, 2556 QA)")
+    parser.add_argument("--skip-ingestion", action="store_true", help="Skip ingestion, reuse existing Neo4j data")
     args = parser.parse_args()
     
     # Get API key
@@ -629,6 +650,7 @@ def main():
         n_corpus_docs=n_corpus,
         n_qa_samples=n_qa,
         seed=42,
+        skip_ingestion=args.skip_ingestion,
     )
     
     output_dir = os.path.dirname(__file__)
