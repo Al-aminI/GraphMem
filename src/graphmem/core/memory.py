@@ -657,19 +657,21 @@ class GraphMem:
     def ingest_batch(
         self,
         documents: List[Dict[str, Any]],
-        max_workers: int = 10,
+        max_workers: Optional[int] = None,
         show_progress: bool = True,
+        auto_scale: bool = True,
     ) -> Dict[str, Any]:
         """
         High-performance batch ingestion using concurrent processing.
         
         Uses ThreadPoolExecutor for parallel document ingestion.
-        5-10x faster than sequential ingest() calls.
+        Auto-detects optimal worker count based on hardware and API limits.
         
         Args:
             documents: List of documents with {"id": str, "content": str, ...}
-            max_workers: Number of concurrent workers (default 10)
+            max_workers: Number of concurrent workers (None = auto-detect)
             show_progress: Show progress logs
+            auto_scale: Auto-detect optimal workers based on hardware/provider
         
         Returns:
             Batch ingestion statistics
@@ -679,8 +681,10 @@ class GraphMem:
             ...     {"id": "doc1", "content": "Apple was founded..."},
             ...     {"id": "doc2", "content": "Microsoft was founded..."},
             ... ]
+            >>> # Auto-detect optimal workers
+            >>> result = memory.ingest_batch(docs)
+            >>> # Or specify manually
             >>> result = memory.ingest_batch(docs, max_workers=20)
-            >>> print(f"Ingested {result['documents_processed']} docs")
         """
         self._ensure_initialized()
         
@@ -689,6 +693,20 @@ class GraphMem:
         import threading
         
         start_time = time.time()
+        
+        # Auto-detect optimal workers if not specified
+        if max_workers is None and auto_scale:
+            try:
+                from graphmem.ingestion import get_optimal_workers
+                optimal = get_optimal_workers(provider=self.config.llm_provider)
+                max_workers = optimal.get("extraction_workers", 10)
+                if show_progress:
+                    logger.info(f"🔧 Auto-detected optimal workers: {max_workers} (provider: {self.config.llm_provider})")
+            except Exception as e:
+                logger.warning(f"Auto-scale failed, using default: {e}")
+                max_workers = 10
+        elif max_workers is None:
+            max_workers = 10
         
         if show_progress:
             logger.info(f"🚀 Batch ingesting {len(documents)} documents with {max_workers} workers")

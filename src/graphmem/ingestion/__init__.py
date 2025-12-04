@@ -44,6 +44,22 @@ from graphmem.ingestion.async_extractor import (
     ExtractionResult,
 )
 
+from graphmem.ingestion.auto_scale import (
+    AutoScaler,
+    HardwareInfo,
+    OptimalConfig,
+    get_optimal_workers,
+    detect_and_configure,
+    GPUOptimizer,
+)
+
+from graphmem.ingestion.benchmark import (
+    Benchmark,
+    BenchmarkResult,
+    ComparisonResult,
+    quick_benchmark,
+)
+
 __all__ = [
     "HighPerformancePipeline",
     "PipelineConfig", 
@@ -52,5 +68,15 @@ __all__ = [
     "EmbeddingBatch",
     "AsyncExtractor",
     "ExtractionResult",
+    "AutoScaler",
+    "HardwareInfo",
+    "OptimalConfig",
+    "get_optimal_workers",
+    "detect_and_configure",
+    "GPUOptimizer",
+    "Benchmark",
+    "BenchmarkResult",
+    "ComparisonResult",
+    "quick_benchmark",
 ]
 
