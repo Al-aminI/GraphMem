@@ -287,17 +287,25 @@ class ComprehensiveEvaluator:
     def _load_corpus(self) -> List[Dict]:
         """Load corpus documents."""
         corpus_file = self.data_dir / "corpus.json"
+        logger.info(f"Looking for corpus at: {corpus_file}")
         if corpus_file.exists():
             with open(corpus_file) as f:
-                return json.load(f)
+                data = json.load(f)
+                logger.info(f"Loaded {len(data)} corpus documents")
+                return data
+        logger.warning(f"Corpus file not found: {corpus_file}")
         return []
     
     def _load_qa(self) -> List[Dict]:
         """Load QA samples."""
         qa_file = self.data_dir / "qa_samples.json"
+        logger.info(f"Looking for QA at: {qa_file}")
         if qa_file.exists():
             with open(qa_file) as f:
-                return json.load(f)
+                data = json.load(f)
+                logger.info(f"Loaded {len(data)} QA samples")
+                return data
+        logger.warning(f"QA file not found: {qa_file}")
         return []
     
     def _init_graphmem(self) -> GraphMem:
@@ -462,9 +470,22 @@ class ComprehensiveEvaluator:
         print(f"   Embeddings: {self.embedding_model}")
         print("=" * 80)
         
+        # Check data is loaded
+        if len(self.corpus) == 0:
+            logger.error("❌ No corpus documents loaded! Check data/corpus.json")
+            return self.graphmem_results, self.naive_results
+        
+        if len(self.qa_samples) == 0:
+            logger.error("❌ No QA samples loaded! Check data/qa_samples.json")
+            return self.graphmem_results, self.naive_results
+        
         # Sample data
         corpus_sample = random.sample(self.corpus, min(n_corpus_docs, len(self.corpus)))
         qa_sample = random.sample(self.qa_samples, min(n_qa_samples, len(self.qa_samples)))
+        
+        if len(qa_sample) == 0:
+            logger.error("❌ No QA samples selected!")
+            return self.graphmem_results, self.naive_results
         
         # ======================== PHASE 1: INGESTION ========================
         print("\n📦 PHASE 1: Ingesting corpus...")
@@ -560,31 +581,38 @@ class ComprehensiveEvaluator:
         print("\n📈 PHASE 3: Calculating metrics...")
         
         # Summary metrics
-        self.graphmem_results.total_queries = len(qa_sample)
+        self.graphmem_results.total_queries = len(self.graphmem_results.queries)
         self.graphmem_results.correct_queries = sum(1 for r in self.graphmem_results.queries if r.correct)
-        self.graphmem_results.accuracy = self.graphmem_results.correct_queries / self.graphmem_results.total_queries
+        if self.graphmem_results.total_queries > 0:
+            self.graphmem_results.accuracy = self.graphmem_results.correct_queries / self.graphmem_results.total_queries
+        else:
+            self.graphmem_results.accuracy = 0.0
+            logger.warning("No queries were processed!")
         
         # Token metrics
-        total_context = sum(r.tokens.context_tokens for r in self.graphmem_results.queries)
-        total_tokens = sum(r.tokens.total_tokens for r in self.graphmem_results.queries)
-        self.graphmem_results.avg_context_tokens = total_context / len(self.graphmem_results.queries)
-        self.graphmem_results.total_tokens_used = total_tokens
-        
-        # Cost metrics
-        total_cost = sum(r.cost.total_cost for r in self.graphmem_results.queries)
-        self.graphmem_results.total_cost_usd = total_cost
-        self.graphmem_results.cost_per_query = total_cost / len(self.graphmem_results.queries)
-        if self.graphmem_results.correct_queries > 0:
-            self.graphmem_results.cost_per_correct_answer = total_cost / self.graphmem_results.correct_queries
-        
-        # Latency metrics
-        self.graphmem_results.avg_total_ms = sum(all_latencies) / len(all_latencies)
-        self.graphmem_results.avg_retrieval_ms = sum(r.latency.retrieval_ms for r in self.graphmem_results.queries) / len(self.graphmem_results.queries)
-        self.graphmem_results.avg_llm_ms = sum(r.latency.llm_generation_ms for r in self.graphmem_results.queries) / len(self.graphmem_results.queries)
-        
-        sorted_latencies = sorted(all_latencies)
-        self.graphmem_results.p50_latency_ms = sorted_latencies[len(sorted_latencies) // 2]
-        self.graphmem_results.p95_latency_ms = sorted_latencies[int(len(sorted_latencies) * 0.95)]
+        if len(self.graphmem_results.queries) > 0:
+            total_context = sum(r.tokens.context_tokens for r in self.graphmem_results.queries)
+            total_tokens = sum(r.tokens.total_tokens for r in self.graphmem_results.queries)
+            self.graphmem_results.avg_context_tokens = total_context / len(self.graphmem_results.queries)
+            self.graphmem_results.total_tokens_used = total_tokens
+            
+            # Cost metrics
+            total_cost = sum(r.cost.total_cost for r in self.graphmem_results.queries)
+            self.graphmem_results.total_cost_usd = total_cost
+            self.graphmem_results.cost_per_query = total_cost / len(self.graphmem_results.queries)
+            if self.graphmem_results.correct_queries > 0:
+                self.graphmem_results.cost_per_correct_answer = total_cost / self.graphmem_results.correct_queries
+            
+            # Latency metrics
+            if len(all_latencies) > 0:
+                self.graphmem_results.avg_total_ms = sum(all_latencies) / len(all_latencies)
+                self.graphmem_results.avg_retrieval_ms = sum(r.latency.retrieval_ms for r in self.graphmem_results.queries) / len(self.graphmem_results.queries)
+                self.graphmem_results.avg_llm_ms = sum(r.latency.llm_generation_ms for r in self.graphmem_results.queries) / len(self.graphmem_results.queries)
+                
+                sorted_latencies = sorted(all_latencies)
+                self.graphmem_results.p50_latency_ms = sorted_latencies[len(sorted_latencies) // 2]
+                p95_idx = min(int(len(sorted_latencies) * 0.95), len(sorted_latencies) - 1)
+                self.graphmem_results.p95_latency_ms = sorted_latencies[p95_idx]
         
         # ======================== PRINT RESULTS ========================
         self._print_results()
