@@ -418,7 +418,7 @@ Summary:"""
         except Exception as e:
             logger.error(f"Context summarization failed: {e}")
             return context.content[:max_length]
-    
+
     def extract_from_url(self, url: str) -> str:
         """
         Extract content from a URL (webpage).

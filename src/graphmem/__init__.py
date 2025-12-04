@@ -88,6 +88,14 @@ from graphmem.llm.embeddings import EmbeddingProvider
 # Storage backends
 from graphmem.stores.neo4j_store import Neo4jStore
 from graphmem.stores.redis_cache import RedisCache
+from graphmem.stores.memory_store import InMemoryStore, InMemoryCache
+
+# Optional Turso support (SQLite-based, offline-first)
+try:
+    from graphmem.stores.turso_store import TursoStore, TursoCache
+except ImportError:
+    TursoStore = None
+    TursoCache = None
 
 __all__ = [
     # Version
@@ -139,4 +147,8 @@ __all__ = [
     # Storage
     "Neo4jStore",
     "RedisCache",
+    "InMemoryStore",
+    "InMemoryCache",
+    "TursoStore",
+    "TursoCache",
 ]

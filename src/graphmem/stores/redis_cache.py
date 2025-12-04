@@ -246,4 +246,3 @@ class RedisCache:
         if self._client:
             self._client.close()
             self._client = None
-

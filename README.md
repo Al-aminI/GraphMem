@@ -320,7 +320,20 @@ memory.evolve()                                    # ← Let memory mature
 │   │                                    │   │  • ingest() → clear user cache   │ │
 │   │  No external DB required!          │   │  • evolve() → clear user cache   │ │
 │   │  Perfect for development/testing   │   │  • clear()  → clear user cache   │ │
+│   └───────────────────────────────────┘   │                                   │ │
+│                                            └───────────────────────────────────┘ │
+│   ┌───────────────────────────────────┐   ┌───────────────────────────────────┐ │
+│   │    📦 TURSO (SQLite) - NEW!       │   │        📦 TURSO CACHE             │ │
 │   │                                    │   │                                   │ │
+│   │  pip install libsql                │   │  SQLite-based persistent cache   │ │
+│   │                                    │   │                                   │ │
+│   │  ✅ Persists to local file         │   │  ✅ No Redis server needed        │ │
+│   │  ✅ Works completely offline       │   │  ✅ TTL support                   │ │
+│   │  ✅ Optional cloud sync            │   │  ✅ Multi-tenant keys             │ │
+│   │  ✅ Vector similarity search       │   │  ✅ Survives restarts             │ │
+│   │  ✅ Per-user .db files             │   │                                   │ │
+│   │                                    │   │  Great for: Edge AI, offline     │ │
+│   │  Great for: Edge, offline, simple  │   │  agents, cost-sensitive deploys  │ │
 │   └───────────────────────────────────┘   └───────────────────────────────────┘ │
 │                                                                                  │
 └─────────────────────────────────────────────────────────────────────────────────┘
@@ -659,6 +672,9 @@ GraphMem:   Retrieve only relevant subgraph    = $
 # Core (in-memory, no dependencies)
 pip install agentic-graph-mem
 
+# With Turso (SQLite persistence, offline-first) - RECOMMENDED for simple deployments
+pip install agentic-graph-mem libsql
+
 # Production (Neo4j + Redis)
 pip install "agentic-graph-mem[all]"
 ```
@@ -667,7 +683,7 @@ pip install "agentic-graph-mem[all]"
 
 ## 📖 Complete Examples
 
-### Basic Usage
+### Basic Usage (In-Memory)
 
 ```python
 from graphmem import GraphMem, MemoryConfig
@@ -697,6 +713,50 @@ print(response.answer)  # "Elon Musk leads Tesla, SpaceX, and Neuralink."
 # Mature
 memory.evolve()  # Consolidates, decays, re-ranks importance
 ```
+
+### With Turso (SQLite Persistence + Offline Support) 🆕
+
+```python
+from graphmem import GraphMem, MemoryConfig
+
+# Turso gives you persistence without running Neo4j!
+# Data survives restarts, works offline, can sync to cloud
+
+config = MemoryConfig(
+    llm_provider="openai_compatible",
+    llm_api_key="sk-or-v1-your-key",
+    llm_api_base="https://openrouter.ai/api/v1",
+    llm_model="google/gemini-2.0-flash-001",
+    embedding_provider="openai_compatible",
+    embedding_api_key="sk-or-v1-your-key",
+    embedding_api_base="https://openrouter.ai/api/v1",
+    embedding_model="openai/text-embedding-3-small",
+    
+    # 🔥 Just add a file path - that's it!
+    turso_db_path="my_agent_memory.db",
+    
+    # Optional: Sync to Turso Cloud for backups/multi-device
+    # turso_url="https://your-db.turso.io",
+    # turso_auth_token="your-token",
+)
+
+memory = GraphMem(config, user_id="alice")
+
+# All data persists in my_agent_memory.db
+memory.ingest("Alice is a software engineer at Google.")
+memory.save()  # Data survives restart!
+
+# Later, in a new session:
+memory2 = GraphMem(config, user_id="alice")
+response = memory2.query("Where does Alice work?")  # Still knows! ✅
+```
+
+**Why Turso over InMemory?**
+- ✅ Data survives restarts (SQLite file)
+- ✅ Works offline (no network needed)
+- ✅ Optional cloud sync (Turso Cloud)
+- ✅ No server to manage (unlike Neo4j)
+- ✅ Per-user database files (true isolation)
 
 ### Production: Multi-Tenant Chat System
 
@@ -852,18 +912,30 @@ Every relationship has a time interval, enabling episodic memory recall.
 ## 📦 Dependencies
 
 ```bash
-# Core (no external services)
+# Core (no external services, in-memory only)
 pip install agentic-graph-mem
 
-# With Neo4j persistence
+# With Turso (SQLite persistence, offline-first) - SIMPLEST OPTION!
+pip install agentic-graph-mem libsql
+
+# With Neo4j persistence (full graph database)
 pip install "agentic-graph-mem[neo4j]"
 
-# With Redis caching
+# With Redis caching (high-performance cache)
 pip install "agentic-graph-mem[redis]"
 
-# Full production stack
+# Full production stack (Neo4j + Redis)
 pip install "agentic-graph-mem[all]"
 ```
+
+### Storage Backend Comparison
+
+| Backend | Persistence | Vector Search | Graph Algorithms | Offline | Use Case |
+|---------|-------------|---------------|------------------|---------|----------|
+| **InMemory** | ❌ | ✅ (in Python) | ✅ (NetworkX) | ✅ | Development, testing |
+| **Turso** | ✅ | ✅ (native) | ✅ (NetworkX) | ✅ | Edge/offline AI, simple deploys |
+| **Neo4j** | ✅ | ✅ (HNSW) | ✅ (GDS, native) | ❌ | Enterprise, complex graphs |
+| **Redis** | ⚠️ (volatile) | ❌ | ❌ | ❌ | Caching layer only |
 
 ---
 

@@ -101,6 +101,11 @@ class MemoryConfig:
     redis_url: Optional[str] = field(default_factory=lambda: os.getenv("GRAPHMEM_REDIS_URL"))
     redis_ttl: int = 3600  # Cache TTL in seconds
     
+    # Turso Configuration (SQLite-based alternative to Neo4j + Redis)
+    turso_db_path: Optional[str] = field(default_factory=lambda: os.getenv("GRAPHMEM_TURSO_DB_PATH"))
+    turso_url: Optional[str] = field(default_factory=lambda: os.getenv("GRAPHMEM_TURSO_URL"))  # For cloud sync
+    turso_auth_token: Optional[str] = field(default_factory=lambda: os.getenv("GRAPHMEM_TURSO_AUTH_TOKEN"))
+    
     # LLM Configuration
     llm_provider: str = field(default_factory=lambda: os.getenv("GRAPHMEM_LLM_PROVIDER", "openai"))
     llm_model: str = field(default_factory=lambda: os.getenv("GRAPHMEM_LLM_MODEL", "gpt-4o-mini"))
@@ -331,7 +336,7 @@ class GraphMem:
             api_base=self.config.llm_api_base,
         )
         
-        # Initialize cache (Redis if configured, otherwise in-memory)
+        # Initialize cache (Redis > Turso > InMemory)
         # Cache must be initialized BEFORE embeddings so embeddings can use it
         if self.config.redis_url:
             try:
@@ -342,9 +347,29 @@ class GraphMem:
                 )
                 logger.info("Using Redis cache")
             except Exception as e:
-                logger.warning(f"Redis unavailable, using in-memory cache: {e}")
-                self._cache = InMemoryCache(ttl=self.config.redis_ttl)
+                logger.warning(f"Redis unavailable, trying Turso cache: {e}")
+                self._cache = None
         else:
+            self._cache = None
+        
+        # Fall back to Turso cache if Redis not configured/available
+        if self._cache is None and self.config.turso_db_path:
+            try:
+                from graphmem.stores.turso_store import TursoCache, TURSO_AVAILABLE
+                if TURSO_AVAILABLE:
+                    cache_path = f"{self.config.turso_db_path}_cache.db"
+                    self._cache = TursoCache(
+                        db_path=cache_path,
+                        ttl=self.config.redis_ttl,
+                        turso_url=self.config.turso_url,
+                        turso_auth_token=self.config.turso_auth_token,
+                    )
+                    logger.info(f"Using Turso cache: {cache_path}")
+            except Exception as e:
+                logger.warning(f"Turso cache unavailable: {e}")
+        
+        # Final fallback to in-memory cache
+        if self._cache is None:
             self._cache = InMemoryCache(ttl=self.config.redis_ttl)
         
         # Initialize embeddings (with cache for embedding reuse)
@@ -356,9 +381,10 @@ class GraphMem:
             cache=self._cache,  # Pass cache for embedding caching
         )
         
-        # Initialize storage (Neo4j if configured, otherwise in-memory)
-        # Use Neo4j if any neo4j_uri is provided (including localhost)
+        # Initialize storage (Neo4j > Turso > InMemory)
+        # Priority: Neo4j (full graph), Turso (SQLite persistent), InMemory (default)
         use_neo4j = bool(self.config.neo4j_uri)
+        use_turso = bool(self.config.turso_db_path) and not use_neo4j
         
         if use_neo4j:
             try:
@@ -371,11 +397,31 @@ class GraphMem:
                 )
                 logger.info("Using Neo4j for persistent storage")
             except Exception as e:
-                logger.warning(f"Neo4j unavailable, falling back to in-memory: {e}")
+                logger.warning(f"Neo4j unavailable, trying Turso: {e}")
+                use_turso = bool(self.config.turso_db_path)
+                if not use_turso:
+                    self._graph_store = InMemoryStore()
+        
+        if use_turso and not hasattr(self, '_graph_store'):
+            try:
+                from graphmem.stores.turso_store import TursoStore, TURSO_AVAILABLE
+                if TURSO_AVAILABLE:
+                    self._graph_store = TursoStore(
+                        db_path=self.config.turso_db_path,
+                        turso_url=self.config.turso_url,
+                        turso_auth_token=self.config.turso_auth_token,
+                    )
+                    logger.info(f"Using Turso for persistent storage: {self.config.turso_db_path}")
+                else:
+                    logger.warning("Turso not available (pip install libsql-experimental)")
+                    self._graph_store = InMemoryStore()
+            except Exception as e:
+                logger.warning(f"Turso unavailable, falling back to in-memory: {e}")
                 self._graph_store = InMemoryStore()
-        else:
+        
+        if not hasattr(self, '_graph_store') or self._graph_store is None:
             self._graph_store = InMemoryStore()
-            logger.info("Using in-memory storage (set neo4j_uri for persistence)")
+            logger.info("Using in-memory storage (set neo4j_uri or turso_db_path for persistence)")
         
         # Initialize entity resolver
         self._entity_resolver = EntityResolver(
