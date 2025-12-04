@@ -411,7 +411,7 @@ class TursoEvaluator:
                 # Infinite retry on rate limits - will never fail
                 batch_result = gm.ingest_batch(
                     documents=documents,
-                    max_workers=10,    # Hardcoded 10 workers
+                    max_workers=20,    # Hardcoded 20 workers
                     show_progress=True,
                     auto_scale=False,  # Disabled
                     aggressive=True,   # Infinite retry on rate limits
