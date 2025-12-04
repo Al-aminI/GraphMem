@@ -70,8 +70,11 @@ docs = [
     "requests>=2.31.0",
 ]
 
-# Local embeddings
+# Local embeddings (includes torch)
 local = ["sentence-transformers>=2.2.0"]
+
+# GPU detection / hardware acceleration
+gpu = ["torch>=2.0.0", "psutil>=5.9.0"]
 
 # Development
 dev = [
@@ -99,6 +102,8 @@ all = [
     "beautifulsoup4>=4.12.0",
     "requests>=2.31.0",
     "sentence-transformers>=2.2.0",
+    "torch>=2.0.0",
+    "psutil>=5.9.0",
 ]
 
 [project.urls]
