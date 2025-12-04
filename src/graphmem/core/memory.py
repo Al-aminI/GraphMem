@@ -947,21 +947,22 @@ class GraphMem:
                 filters=filters or {},
             )
             
-            # Execute query
-            response = self._query_engine.query(
-                query=memory_query,
-                memory=self._memory,
-            )
+            # Thread-safe query execution (reads memory dictionaries)
+            with self._memory_lock:
+                # Execute query
+                response = self._query_engine.query(
+                    query=memory_query,
+                    memory=self._memory,
+                )
+                
+                # Record access on retrieved nodes
+                for node in response.nodes:
+                    if node.id in self._memory.nodes:
+                        self._memory.nodes[node.id] = node.record_access()
             
             # Update metrics
             response.latency_ms = (time.time() - start_time) * 1000
             self._metrics["queries"] += 1
-            
-            # Record access on retrieved nodes (thread-safe)
-            with self._memory_lock:
-                for node in response.nodes:
-                    if node.id in self._memory.nodes:
-                        self._memory.nodes[node.id] = node.record_access()
             
             logger.info(f"Query completed: '{query[:50]}...' -> {len(response.nodes)} nodes")
             
@@ -1014,18 +1015,20 @@ class GraphMem:
             return []
         
         try:
-            events = self._evolution_engine.evolve(
-                memory=self._memory,
-                evolution_types=evolution_types,
-                force=force,
-            )
-            
-            # Update memory with evolution results
-            if events:
-                self._graph_store.save_memory(self._memory)
+            # Thread-safe evolution (modifies memory dictionaries)
+            with self._memory_lock:
+                events = self._evolution_engine.evolve(
+                    memory=self._memory,
+                    evolution_types=evolution_types,
+                    force=force,
+                )
                 
-                if self._cache:
-                    self._cache.invalidate(self.memory_id, user_id=self.user_id)
+                # Update memory with evolution results
+                if events:
+                    self._graph_store.save_memory(self._memory)
+                    
+                    if self._cache:
+                        self._cache.invalidate(self.memory_id, user_id=self.user_id)
             
             self._evolution_history.extend(events)
             self._metrics["evolutions"] += len(events)
