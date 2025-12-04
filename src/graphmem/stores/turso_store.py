@@ -55,6 +55,7 @@ class TursoStore:
         turso_url: Optional[str] = None,
         turso_auth_token: Optional[str] = None,
         sync_mode: str = "full",  # "full", "push", "pull", or None
+        embedding_dimensions: int = 1536,  # OpenAI text-embedding-3-small default
     ):
         """
         Initialize Turso store.
@@ -75,6 +76,7 @@ class TursoStore:
         self.turso_url = turso_url
         self.turso_auth_token = turso_auth_token
         self.sync_mode = sync_mode
+        self.embedding_dimensions = embedding_dimensions
         
         # Connect to database
         if turso_url and turso_auth_token:
@@ -97,8 +99,9 @@ class TursoStore:
         """Create database tables if they don't exist."""
         cursor = self.conn.cursor()
         
-        # Entities table (nodes)
-        cursor.execute("""
+        # Entities table (nodes) with native vector support
+        # F32_BLOB(n) enables native vector similarity search
+        cursor.execute(f"""
             CREATE TABLE IF NOT EXISTS entities (
                 id TEXT PRIMARY KEY,
                 memory_id TEXT NOT NULL,
@@ -111,10 +114,23 @@ class TursoStore:
                 accessed_at TEXT,
                 created_at TEXT,
                 updated_at TEXT,
-                embedding BLOB,
+                embedding F32_BLOB({self.embedding_dimensions}),
                 metadata TEXT
             )
         """)
+        
+        # Create native vector index for fast similarity search
+        try:
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS entities_vector_idx 
+                ON entities (libsql_vector_idx(embedding))
+            """)
+            self._native_vector_search = True
+            logger.info("Native vector search index created")
+        except Exception as e:
+            # Fallback to Python-based search if vector index fails
+            self._native_vector_search = False
+            logger.warning(f"Native vector index not available, using Python fallback: {e}")
         
         # Relationships table (edges)
         cursor.execute("""
@@ -201,12 +217,6 @@ class TursoStore:
         
         # Save nodes
         for node_id, node in memory.nodes.items():
-            embedding_blob = None
-            if node.embedding:
-                # Store embedding as blob
-                import struct
-                embedding_blob = struct.pack(f'{len(node.embedding)}f', *node.embedding)
-            
             # Convert importance to float/int if it's an enum
             importance_val = node.importance
             if hasattr(importance_val, 'value'):
@@ -221,27 +231,56 @@ class TursoStore:
             if hasattr(node, 'created_at') and node.created_at:
                 created_at_str = node.created_at.isoformat() if isinstance(node.created_at, datetime) else str(node.created_at)
             
-            cursor.execute("""
-                INSERT OR REPLACE INTO entities 
-                (id, memory_id, user_id, name, entity_type, description, 
-                 importance, access_count, accessed_at, created_at, updated_at,
-                 embedding, metadata)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                node_id,
-                memory.id,
-                node.user_id,
-                node.name,
-                node.entity_type,
-                node.description,
-                importance_val,
-                node.access_count,
-                accessed_at_str,
-                created_at_str,
-                now,
-                embedding_blob,
-                json.dumps(node.properties) if hasattr(node, 'properties') and node.properties else None
-            ))
+            metadata_json = json.dumps(node.properties) if hasattr(node, 'properties') and node.properties else None
+            
+            # Use native vector format if embedding exists
+            if node.embedding and getattr(self, '_native_vector_search', False):
+                # Format embedding as string for vector32() function
+                embedding_str = str(list(node.embedding))
+                cursor.execute(f"""
+                    INSERT OR REPLACE INTO entities 
+                    (id, memory_id, user_id, name, entity_type, description, 
+                     importance, access_count, accessed_at, created_at, updated_at,
+                     embedding, metadata)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, vector32('{embedding_str}'), ?)
+                """, (
+                    node_id,
+                    memory.id,
+                    node.user_id,
+                    node.name,
+                    node.entity_type,
+                    node.description,
+                    importance_val,
+                    node.access_count,
+                    accessed_at_str,
+                    created_at_str,
+                    now,
+                    metadata_json
+                ))
+            else:
+                # Fallback: store embedding as JSON string
+                embedding_json = json.dumps(node.embedding) if node.embedding else None
+                cursor.execute("""
+                    INSERT OR REPLACE INTO entities 
+                    (id, memory_id, user_id, name, entity_type, description, 
+                     importance, access_count, accessed_at, created_at, updated_at,
+                     embedding, metadata)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    node_id,
+                    memory.id,
+                    node.user_id,
+                    node.name,
+                    node.entity_type,
+                    node.description,
+                    importance_val,
+                    node.access_count,
+                    accessed_at_str,
+                    created_at_str,
+                    now,
+                    embedding_json,
+                    metadata_json
+                ))
         
         # Save edges
         for edge_id, edge in memory.edges.items():
@@ -458,11 +497,10 @@ class TursoStore:
         user_id: Optional[str] = None,
     ) -> List[MemoryNode]:
         """
-        Perform vector similarity search.
+        Perform vector similarity search using native libsql vector_top_k().
         
-        Note: This is a basic implementation using cosine similarity in Python.
-        For production with large datasets, consider using Turso's native vector
-        search when it becomes available in the Python SDK.
+        Uses libsql's native F32_BLOB vector search for optimal performance.
+        Falls back to Python-based cosine similarity if native search unavailable.
         
         Args:
             memory_id: Memory to search in
@@ -473,6 +511,62 @@ class TursoStore:
         Returns:
             List of most similar nodes
         """
+        cursor = self.conn.cursor()
+        
+        # Try native vector search first
+        if getattr(self, '_native_vector_search', False):
+            try:
+                # Format query embedding for vector_top_k
+                query_str = str(list(query_embedding))
+                
+                # Native vector search with vector_top_k
+                # Use subquery to avoid ambiguous column name
+                results = cursor.execute(f"""
+                    SELECT e.id, e.memory_id, e.user_id, 
+                           e.name, e.entity_type, e.description,
+                           e.importance, e.access_count, e.accessed_at,
+                           e.created_at, e.updated_at, e.metadata
+                    FROM vector_top_k('entities_vector_idx', '{query_str}', {top_k * 3}) AS v
+                    JOIN entities AS e ON e.rowid = v.id
+                    WHERE e.memory_id = ?
+                    AND (e.user_id = ? OR e.user_id IS NULL OR ? IS NULL)
+                    LIMIT ?
+                """, (memory_id, user_id, user_id, top_k)).fetchall()
+                
+                nodes = []
+                for row in results:
+                    node = MemoryNode(
+                        id=row[0],
+                        name=row[3],
+                        entity_type=row[4],
+                        description=row[5],
+                        importance=row[6] or 0.5,
+                        access_count=row[7] or 0,
+                        accessed_at=datetime.fromisoformat(row[8]) if row[8] else datetime.utcnow(),
+                        created_at=datetime.fromisoformat(row[9]) if row[9] else datetime.utcnow(),
+                        embedding=query_embedding,  # Don't need actual embedding in results
+                        properties=json.loads(row[11]) if row[11] else {},
+                        user_id=row[2],
+                    )
+                    nodes.append(node)
+                
+                logger.debug(f"Native vector search returned {len(nodes)} results")
+                return nodes
+                
+            except Exception as e:
+                logger.warning(f"Native vector search failed, falling back to Python: {e}")
+        
+        # Fallback: Python-based cosine similarity
+        return self._vector_search_fallback(memory_id, query_embedding, top_k, user_id)
+    
+    def _vector_search_fallback(
+        self,
+        memory_id: str,
+        query_embedding: List[float],
+        top_k: int,
+        user_id: Optional[str],
+    ) -> List[MemoryNode]:
+        """Fallback vector search using Python cosine similarity."""
         import math
         
         def cosine_similarity(a: List[float], b: List[float]) -> float:
@@ -484,8 +578,9 @@ class TursoStore:
                 return 0.0
             return dot_product / (norm_a * norm_b)
         
-        # Load all nodes with embeddings
         cursor = self.conn.cursor()
+        
+        # Load all nodes with embeddings (stored as JSON in fallback mode)
         if user_id:
             cursor.execute("""
                 SELECT id, embedding FROM entities 
@@ -500,15 +595,25 @@ class TursoStore:
         
         # Calculate similarities
         similarities = []
-        import struct
         for row in cursor.fetchall():
             node_id = row[0]
-            embedding_blob = row[1]
-            num_floats = len(embedding_blob) // 4
-            node_embedding = list(struct.unpack(f'{num_floats}f', embedding_blob))
+            embedding_data = row[1]
             
-            sim = cosine_similarity(query_embedding, node_embedding)
-            similarities.append((node_id, sim))
+            # Parse embedding (could be JSON string or binary)
+            try:
+                if isinstance(embedding_data, str):
+                    node_embedding = json.loads(embedding_data)
+                elif isinstance(embedding_data, bytes):
+                    import struct
+                    num_floats = len(embedding_data) // 4
+                    node_embedding = list(struct.unpack(f'{num_floats}f', embedding_data))
+                else:
+                    continue
+                    
+                sim = cosine_similarity(query_embedding, node_embedding)
+                similarities.append((node_id, sim))
+            except Exception:
+                continue
         
         # Sort by similarity
         similarities.sort(key=lambda x: x[1], reverse=True)
@@ -520,11 +625,6 @@ class TursoStore:
             cursor.execute("SELECT * FROM entities WHERE id = ?", (node_id,))
             row = cursor.fetchone()
             if row:
-                embedding = None
-                if row[11]:
-                    num_floats = len(row[11]) // 4
-                    embedding = list(struct.unpack(f'{num_floats}f', row[11]))
-                
                 node = MemoryNode(
                     id=row[0],
                     name=row[3],
@@ -534,7 +634,7 @@ class TursoStore:
                     access_count=row[7] or 0,
                     accessed_at=datetime.fromisoformat(row[8]) if row[8] else datetime.utcnow(),
                     created_at=datetime.fromisoformat(row[9]) if row[9] else datetime.utcnow(),
-                    embedding=embedding,
+                    embedding=query_embedding,
                     properties=json.loads(row[12]) if row[12] else {},
                     user_id=row[2],
                 )
