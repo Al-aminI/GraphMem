@@ -375,8 +375,8 @@ class NaiveRAG:
             api_key=self.api_key,
             api_base=self.api_base,
             model=self.llm_model,
-            azure_api_version="2024-08-01-preview",
-            azure_deployment=self.azure_deployment,
+            api_version="2024-08-01-preview",
+            deployment=self.azure_deployment,  # Fixed: use 'deployment' not 'azure_deployment'
         )
         
         self.embedder = get_embedding_provider(
@@ -384,8 +384,8 @@ class NaiveRAG:
             api_key=self.api_key,
             api_base=self.api_base,
             model=self.embedding_model,
-            azure_api_version="2024-08-01-preview",
-            azure_deployment=self.azure_embedding_deployment,
+            api_version="2024-08-01-preview",
+            deployment=self.azure_embedding_deployment,  # Fixed: use 'deployment' not 'azure_deployment'
         )
     
     def ingest(self, content: str, doc_id: str):
@@ -401,7 +401,8 @@ class NaiveRAG:
                 chunk_id = f"{doc_id}_chunk_{chunk_idx}"
                 
                 try:
-                    embedding = self.embedder.embed(chunk_content)
+                    # Use embed_text (correct method name)
+                    embedding = self.embedder.embed_text(chunk_content)
                     self.chunks.append({
                         "id": chunk_id,
                         "content": chunk_content,
@@ -419,7 +420,8 @@ class NaiveRAG:
             chunk_content = ' '.join(chunk_words)
             chunk_id = f"{doc_id}_chunk_{chunk_idx}"
             try:
-                embedding = self.embedder.embed(chunk_content)
+                # Use embed_text (correct method name)
+                embedding = self.embedder.embed_text(chunk_content)
                 self.chunks.append({
                     "id": chunk_id,
                     "content": chunk_content,
@@ -440,7 +442,7 @@ class NaiveRAG:
         if not self.embeddings:
             return [], ""
         
-        query_embedding = self.embedder.embed(query)
+        query_embedding = self.embedder.embed_text(query)
         
         similarities = []
         for i, chunk_emb in enumerate(self.embeddings):
@@ -489,7 +491,9 @@ Answer:"""
         tokens.prompt_tokens = len(prompt) // 4
         
         try:
-            answer = self.llm.chat(prompt)
+            # Use proper message format for chat API
+            messages = [{"role": "user", "content": prompt}]
+            answer = self.llm.chat(messages)
             tokens.completion_tokens = len(answer) // 4
         except Exception as e:
             answer = f"Error: {e}"
@@ -532,6 +536,11 @@ class RAGASEvaluator:
         except Exception as e:
             return {"score": 0.0, "reason": f"Parse error: {e}"}
     
+    def _call_llm(self, prompt: str) -> str:
+        """Call LLM with proper message format."""
+        messages = [{"role": "user", "content": prompt}]
+        return self.llm.chat(messages)
+    
     def evaluate_faithfulness(self, question: str, context: str, answer: str) -> Tuple[float, str]:
         """Evaluate if answer is grounded in context."""
         if not context or not answer:
@@ -544,7 +553,7 @@ class RAGASEvaluator:
         )
         
         try:
-            response = self.llm.chat(prompt)
+            response = self._call_llm(prompt)
             result = self._parse_json_response(response)
             return float(result.get("score", 0)), result.get("reason", "")
         except Exception as e:
@@ -561,7 +570,7 @@ class RAGASEvaluator:
         )
         
         try:
-            response = self.llm.chat(prompt)
+            response = self._call_llm(prompt)
             result = self._parse_json_response(response)
             return float(result.get("score", 0)), result.get("reason", "")
         except Exception as e:
@@ -578,7 +587,7 @@ class RAGASEvaluator:
         )
         
         try:
-            response = self.llm.chat(prompt)
+            response = self._call_llm(prompt)
             result = self._parse_json_response(response)
             return float(result.get("score", 0)), result.get("reason", "")
         except Exception as e:
@@ -596,7 +605,7 @@ class RAGASEvaluator:
         )
         
         try:
-            response = self.llm.chat(prompt)
+            response = self._call_llm(prompt)
             result = self._parse_json_response(response)
             return float(result.get("score", 0)), result.get("reason", "")
         except Exception as e:
@@ -614,7 +623,7 @@ class RAGASEvaluator:
         )
         
         try:
-            response = self.llm.chat(prompt)
+            response = self._call_llm(prompt)
             result = self._parse_json_response(response)
             return float(result.get("score", 0)), result.get("reason", "")
         except Exception as e:
@@ -744,6 +753,40 @@ class ComprehensiveEvaluator:
         logger.error(f"No QA file found in {self.data_dir}")
         return []
     
+    def _find_aligned_corpus(self, qa_sample: Dict) -> List[Dict]:
+        """
+        Find corpus documents that match the evidence in a QA sample.
+        
+        Uses title and source matching to find relevant documents.
+        """
+        evidence_list = qa_sample.get("evidence_list", [])
+        if not evidence_list:
+            return []
+        
+        # Extract evidence titles and sources
+        evidence_markers = []
+        for ev in evidence_list:
+            title = ev.get("title", "").lower()
+            source = ev.get("source", "").lower()
+            evidence_markers.append((title, source))
+        
+        # Find matching corpus docs
+        matched_docs = []
+        for doc in self.corpus:
+            doc_title = doc.get("title", "").lower()
+            doc_source = doc.get("source", "").lower()
+            
+            for ev_title, ev_source in evidence_markers:
+                # Match by title similarity or source
+                if ev_title and ev_title[:50] in doc_title:
+                    matched_docs.append(doc)
+                    break
+                elif ev_source and ev_source in doc_source and ev_title[:30] in doc_title:
+                    matched_docs.append(doc)
+                    break
+        
+        return matched_docs
+    
     def _init_graphmem(self) -> GraphMem:
         """Initialize GraphMem with Turso backend."""
         provider_name = "azure_openai" if self.provider == "azure" else self.provider
@@ -788,8 +831,8 @@ class ComprehensiveEvaluator:
             api_key=self.api_key,
             api_base=self.api_base,
             model=self.llm_model,
-            azure_api_version="2024-08-01-preview",
-            azure_deployment=self.azure_deployment,
+            api_version="2024-08-01-preview",
+            deployment=self.azure_deployment,  # Fixed: use 'deployment' not 'azure_deployment'
         )
         
         self.ragas_evaluator = RAGASEvaluator(llm)
@@ -1176,6 +1219,190 @@ class ComprehensiveEvaluator:
         
         return self.graphmem_results, self.naive_results
     
+    def run_aligned(self, qa_index: int = 0):
+        """
+        Run aligned evaluation: pick 1 QA sample and ingest ONLY its evidence corpus.
+        
+        This ensures the QA question has matching evidence in the corpus.
+        """
+        print("\n" + "=" * 80)
+        print("🎯 ALIGNED EVALUATION (1 QA + Matching Corpus)")
+        print("=" * 80)
+        
+        # Validate data
+        if not self.corpus:
+            logger.error("❌ No corpus!")
+            return
+        if not self.qa_samples:
+            logger.error("❌ No QA samples!")
+            return
+        
+        if qa_index >= len(self.qa_samples):
+            qa_index = 0
+        
+        # Pick the QA sample
+        qa_sample = self.qa_samples[qa_index]
+        query = qa_sample['query']
+        expected = qa_sample['answer']
+        q_type = self._get_question_type(qa_sample)
+        
+        print(f"\n📝 Selected QA (index {qa_index}):")
+        print(f"   Question: {query[:100]}...")
+        print(f"   Expected: {expected}")
+        print(f"   Type: {q_type}")
+        
+        # Find aligned corpus docs
+        aligned_corpus = self._find_aligned_corpus(qa_sample)
+        
+        if not aligned_corpus:
+            # Try with more relaxed matching - just use the evidence facts directly
+            print("   ⚠️ No exact corpus matches found, using evidence directly")
+            aligned_corpus = []
+            for ev in qa_sample.get("evidence_list", []):
+                aligned_corpus.append({
+                    "title": ev.get("title", ""),
+                    "body": ev.get("fact", ""),
+                    "source": ev.get("source", ""),
+                })
+        
+        print(f"   📚 Aligned corpus: {len(aligned_corpus)} documents")
+        for doc in aligned_corpus:
+            print(f"      - {doc.get('title', 'untitled')[:60]}...")
+        
+        print("=" * 80)
+        
+        # ====================== PHASE 1: INGEST ALIGNED CORPUS ======================
+        gm = self._init_graphmem()
+        naive = self._init_naive_rag()
+        
+        if self.skip_ingestion:
+            print("\n📦 PHASE 1: Skipping ingestion (--skip-ingestion)")
+            logger.info("   Using existing data in Turso DB")
+            # Get memory metrics from existing data
+            try:
+                memory = gm._memory
+                self.graphmem_results.memory.total_documents = len(aligned_corpus)
+                self.graphmem_results.memory.total_entities = len(memory.nodes)
+                self.graphmem_results.memory.total_relationships = len(memory.edges)
+                self.graphmem_results.memory.total_clusters = len(memory.clusters)
+                logger.info(f"   GraphMem: {len(memory.nodes)} entities, {len(memory.edges)} relationships")
+            except Exception as e:
+                logger.warning(f"Could not get memory metrics: {e}")
+        else:
+            print("\n📦 PHASE 1: Ingesting aligned corpus...")
+            
+            # Clean up existing Turso DB for fresh ingestion
+            if os.path.exists(self.turso_db_path):
+                os.remove(self.turso_db_path)
+                gm = self._init_graphmem()  # Re-init after DB delete
+            
+            # Prepare documents
+            documents = []
+            for i, doc in enumerate(aligned_corpus):
+                content = f"{doc.get('title', '')}\n{doc.get('body', doc.get('content', ''))}"
+                doc_id = f"aligned_doc_{i}"
+                documents.append({"id": doc_id, "content": content[:8000]})
+            
+            # GraphMem ingest
+            print(f"   📊 GraphMem: Ingesting {len(documents)} documents...")
+            gm_result = gm.ingest_batch(
+                documents=documents,
+                max_workers=4,
+                show_progress=True,
+                aggressive=True,
+            )
+            logger.info(f"   GraphMem: {gm_result.get('documents_processed', 0)} docs, "
+                       f"{gm_result.get('total_entities', 0)} entities")
+            
+            # Naive RAG ingest
+            print(f"   📊 NaiveRAG: Ingesting {len(documents)} documents...")
+            for doc in documents:
+                naive.ingest(doc["content"], doc["id"])
+            logger.info(f"   NaiveRAG: {len(naive.chunks)} chunks")
+            
+            # Get memory metrics
+            try:
+                memory = gm._memory
+                self.graphmem_results.memory.total_documents = len(documents)
+                self.graphmem_results.memory.total_entities = len(memory.nodes)
+                self.graphmem_results.memory.total_relationships = len(memory.edges)
+                self.graphmem_results.memory.total_clusters = len(memory.clusters)
+            except Exception as e:
+                logger.warning(f"Could not get memory metrics: {e}")
+        
+        # Initialize RAGAS evaluator
+        if self.use_ragas:
+            self._init_ragas_evaluator()
+        
+        # ====================== PHASE 2: QUERY ======================
+        print(f"\n📊 PHASE 2: Running query...")
+        
+        # ---- Query GraphMem ----
+        print("\n   🧠 GraphMem:")
+        gm_answer, gm_context, gm_tokens, gm_latency = self._query_graphmem(gm, query)
+        gm_correct = self._simple_check_answer(gm_answer, expected)
+        gm_cost = self._calculate_cost(gm_tokens, self.llm_model)
+        
+        # RAGAS evaluation
+        if self.use_ragas and self.ragas_evaluator:
+            print("   📏 Running RAGAS evaluation...")
+            gm_ragas = self.ragas_evaluator.evaluate_all(query, gm_context, gm_answer, expected)
+        else:
+            gm_ragas = RAGASMetrics()
+        
+        gm_result = QueryResult(
+            query=query,
+            expected=expected,
+            predicted=gm_answer,
+            context=gm_context,
+            correct=gm_correct,
+            question_type=q_type,
+            ragas=gm_ragas,
+            tokens=gm_tokens,
+            latency=gm_latency,
+            cost=gm_cost,
+        )
+        self.graphmem_results.queries.append(gm_result)
+        self._log_debug("GraphMem", query, expected, gm_answer, gm_context, gm_ragas, q_type)
+        
+        # ---- Query Naive RAG ----
+        print("\n   📚 NaiveRAG:")
+        naive_answer, naive_context, naive_tokens, naive_latency = naive.query(query)
+        naive_correct = self._simple_check_answer(naive_answer, expected)
+        naive_cost = self._calculate_cost(naive_tokens, self.llm_model)
+        
+        # RAGAS evaluation
+        if self.use_ragas and self.ragas_evaluator:
+            naive_ragas = self.ragas_evaluator.evaluate_all(query, naive_context, naive_answer, expected)
+        else:
+            naive_ragas = RAGASMetrics()
+        
+        naive_result = QueryResult(
+            query=query,
+            expected=expected,
+            predicted=naive_answer,
+            context=naive_context,
+            correct=naive_correct,
+            question_type=q_type,
+            ragas=naive_ragas,
+            tokens=naive_tokens,
+            latency=naive_latency,
+            cost=naive_cost,
+        )
+        self.naive_results.queries.append(naive_result)
+        self._log_debug("NaiveRAG", query, expected, naive_answer, naive_context, naive_ragas, q_type)
+        
+        # ====================== PHASE 3: CALCULATE & PRINT ======================
+        print("\n📈 PHASE 3: Results...")
+        
+        self._calculate_system_metrics(self.graphmem_results)
+        self._calculate_system_metrics(self.naive_results)
+        
+        self._print_comparison()
+        self._save_results()
+        
+        return self.graphmem_results, self.naive_results
+    
     def _print_comparison(self):
         """Print side-by-side comparison with RAGAS metrics."""
         gm = self.graphmem_results
@@ -1323,6 +1550,8 @@ def main():
     parser.add_argument("--skip-ingestion", action="store_true", help="Skip ingestion")
     parser.add_argument("--no-ragas", action="store_true", help="Disable RAGAS evaluation")
     parser.add_argument("--turso-db", default="eval_graphmem.db", help="Turso database path")
+    parser.add_argument("--aligned", action="store_true", help="Use aligned mode: pick 1 QA and ingest only its evidence corpus")
+    parser.add_argument("--qa-index", type=int, default=0, help="QA sample index to use in aligned mode")
     
     args = parser.parse_args()
     
@@ -1340,11 +1569,15 @@ def main():
         use_ragas=not args.no_ragas,
     )
     
-    evaluator.run(
-        n_corpus_docs=args.corpus_docs,
-        n_qa_samples=args.qa_samples,
-        seed=args.seed,
-    )
+    # Aligned mode: use 1 QA and its matching corpus
+    if args.aligned:
+        evaluator.run_aligned(qa_index=args.qa_index)
+    else:
+        evaluator.run(
+            n_corpus_docs=args.corpus_docs,
+            n_qa_samples=args.qa_samples,
+            seed=args.seed,
+        )
 
 
 if __name__ == "__main__":

@@ -1,0 +1,48 @@
+[
+  {
+    "system": "GraphMem",
+    "question_type": "inference",
+    "query": "Who is the individual associated with the cryptocurrency industry facing a criminal trial on fraud and conspiracy charges, as reported by both The Verge and TechCrunch, and is accused by prosecutors o",
+    "expected": "Sam Bankman-Fried",
+    "predicted": "The individual associated with the cryptocurrency industry facing a criminal trial on fraud and conspiracy charges is Sam Bankman-Fried. According to reports by The Verge and TechCrunch, prosecutors accuse him of committing fraud for personal gain. His second trial with additional charges is scheduled for March 2024.",
+    "context_preview": "Relevant Entities:\n- Gary Wang (Person): Co-founder and former CTO of FTX, pleaded guilty to federal criminal charges in December 2022\n- FTX lawyers (Organization): Failed cryptocurrency exchange founded in 2019, accused of fraud and misappropriation of customer funds\n- Sam Bankman-Fried (Person): Founder and former CEO of FTX, involved in alleged financial misconduct and misappropriation of customer funds\n- Withers (Organization): Law firm with a cryptocurrency practice co-chaired by Christophe",
+    "ragas_scores": {
+      "faithfulness": 0.5,
+      "answer_relevancy": 1.0,
+      "context_precision": 1.0,
+      "context_recall": 1.0,
+      "answer_correctness": 1.0,
+      "overall": 0.8999999999999999
+    },
+    "ragas_reasons": {
+      "faithfulness": "The answer correctly identifies Sam Bankman-Fried as the individual facing criminal trial on fraud and conspiracy charges and accused by prosecutors of fraud for personal gain, which is supported by the context. However, the claim that his second trial with additional charges is scheduled for March 2024 is not mentioned or supported by the context.",
+      "answer_relevancy": "The answer directly and completely identifies Sam Bankman-Fried as the individual associated with the cryptocurrency industry facing fraud and conspiracy charges, as reported by The Verge and TechCrunch, and mentions the prosecutors' accusation of fraud for personal gain. The additional information about the second trial is relevant and not excessive.",
+      "context_precision": "The context directly identifies Sam Bankman-Fried as the individual associated with the cryptocurrency industry facing criminal trial on fraud and conspiracy charges, as reported by relevant sources including TechCrunch, and details the accusations by prosecutors of fraud for personal gain. The information is focused and relevant without significant noise.",
+      "context_recall": "The context clearly identifies Sam Bankman-Fried as the individual associated with the cryptocurrency industry facing criminal trial on fraud and conspiracy charges, as reported by relevant sources including TechCrunch, and details the accusations of fraud for personal gain by prosecutors.",
+      "answer_correctness": "The generated answer correctly identifies Sam Bankman-Fried as the individual associated with the cryptocurrency industry facing criminal trial on fraud and conspiracy charges, matching the ground truth and including accurate additional details from the sources."
+    }
+  },
+  {
+    "system": "NaiveRAG",
+    "question_type": "inference",
+    "query": "Who is the individual associated with the cryptocurrency industry facing a criminal trial on fraud and conspiracy charges, as reported by both The Verge and TechCrunch, and is accused by prosecutors o",
+    "expected": "Sam Bankman-Fried",
+    "predicted": "Sam Bankman-Fried",
+    "context_preview": "Additionally, Bankman-Fried allegedly used more than $100 million of customer funds to make political contributions; prosecutors can show evidence of those contributions in this trial, even though they aren\u2019t part of the charges brought. A second trial is scheduled for March 2024, with additional charges. Before his fall, Bankman-Fried made himself out to be the Good Boy of crypto \u2014 the trustworthy face of a sometimes-shady industry. He was also very interested in publicity, sitting for many int",
+    "ragas_scores": {
+      "faithfulness": 1.0,
+      "answer_relevancy": 0.7,
+      "context_precision": 1.0,
+      "context_recall": 1.0,
+      "answer_correctness": 1.0,
+      "overall": 0.94
+    },
+    "ragas_reasons": {
+      "faithfulness": "The answer 'Sam Bankman-Fried' is fully supported by the context, which identifies him as the individual associated with the cryptocurrency industry facing a criminal trial on fraud and conspiracy charges and accused by prosecutors of fraud for personal gain.",
+      "answer_relevancy": "The answer correctly identifies the individual, Sam Bankman-Fried, associated with the cryptocurrency industry facing criminal trial on fraud and conspiracy charges. However, it lacks mention of the sources (The Verge and TechCrunch) and the detail that prosecutors accuse him of committing fraud for personal gain, which are part of the question's context.",
+      "context_precision": "The context directly discusses Sam Bankman-Fried, the individual associated with the cryptocurrency industry facing a criminal trial on fraud and conspiracy charges, including details about the charges, trial, and accusations by prosecutors, making it highly relevant and focused.",
+      "context_recall": "The context clearly identifies Sam Bankman-Fried as the individual associated with the cryptocurrency industry facing a criminal trial on fraud and conspiracy charges, with prosecutors accusing him of fraud for personal gain. It also references coverage by major outlets and details about the trial and charges, fully supporting the ground truth answer.",
+      "answer_correctness": "The generated answer correctly identifies Sam Bankman-Fried as the individual associated with the cryptocurrency industry facing criminal trial on fraud and conspiracy charges, matching the ground truth exactly."
+    }
+  }
+]

@@ -1,0 +1,48 @@
+[
+  {
+    "system": "GraphMem",
+    "question_type": "inference",
+    "query": "Who is the individual associated with the cryptocurrency industry facing a criminal trial on fraud and conspiracy charges, as reported by both The Verge and TechCrunch, and is accused by prosecutors o",
+    "expected": "Sam Bankman-Fried",
+    "predicted": "The individual associated with the cryptocurrency industry facing a criminal trial on fraud and conspiracy charges is Sam Bankman-Fried. He is the founder of FTX and Alameda Research and is the defendant in a legal case involving seven counts, including wire fraud and conspiracy. Prosecutors accuse him of committing fraud for personal gain. This case has drawn significant attention, with key witnesses such as Nishad Singh, the head of engineering at FTX, and Gary Wang, co-founder and former CTO ",
+    "context_preview": "Relevant Entities:\n- Sam Bankman-Fried (Person): Founder of FTX and Alameda Research, defendant in a criminal trial facing seven counts including wire fraud and conspiracy\n- FTX lawyers (Organization): Cryptocurrency exchange platform accused of mismanaging customer funds and conflicts of interest, involved in legal indictment\n- Gary Wang (Person): Co-founder and former CTO of FTX, pleaded guilty to federal criminal charges in December 2022\n- cryptocurrency industry (Concept): Industry involving",
+    "ragas_scores": {
+      "faithfulness": 0.0,
+      "answer_relevancy": 0.0,
+      "context_precision": 0.0,
+      "context_recall": 0.0,
+      "answer_correctness": 0.0,
+      "overall": 0.0
+    },
+    "ragas_reasons": {
+      "faithfulness": "Error: Error code: 400 - {'error': {'message': \"Invalid type for 'messages': expected an array of objects, but got a string instead.\", 'type': 'invalid_request_error', 'param': 'messages', 'code': 'invalid_type'}}",
+      "answer_relevancy": "Error: Error code: 400 - {'error': {'message': \"Invalid type for 'messages': expected an array of objects, but got a string instead.\", 'type': 'invalid_request_error', 'param': 'messages', 'code': 'invalid_type'}}",
+      "context_precision": "Error: Error code: 400 - {'error': {'message': \"Invalid type for 'messages': expected an array of objects, but got a string instead.\", 'type': 'invalid_request_error', 'param': 'messages', 'code': 'invalid_type'}}",
+      "context_recall": "Error: Error code: 400 - {'error': {'message': \"Invalid type for 'messages': expected an array of objects, but got a string instead.\", 'type': 'invalid_request_error', 'param': 'messages', 'code': 'invalid_type'}}",
+      "answer_correctness": "Error: Error code: 400 - {'error': {'message': \"Invalid type for 'messages': expected an array of objects, but got a string instead.\", 'type': 'invalid_request_error', 'param': 'messages', 'code': 'invalid_type'}}"
+    }
+  },
+  {
+    "system": "NaiveRAG",
+    "question_type": "inference",
+    "query": "Who is the individual associated with the cryptocurrency industry facing a criminal trial on fraud and conspiracy charges, as reported by both The Verge and TechCrunch, and is accused by prosecutors o",
+    "expected": "Sam Bankman-Fried",
+    "predicted": "Error: Error code: 404 - {'error': {'code': '404', 'message': 'Resource not found'}}",
+    "context_preview": "Additionally, Bankman-Fried allegedly used more than $100 million of customer funds to make political contributions; prosecutors can show evidence of those contributions in this trial, even though they aren\u2019t part of the charges brought. A second trial is scheduled for March 2024, with additional charges. Before his fall, Bankman-Fried made himself out to be the Good Boy of crypto \u2014 the trustworthy face of a sometimes-shady industry. He was also very interested in publicity, sitting for many int",
+    "ragas_scores": {
+      "faithfulness": 0.0,
+      "answer_relevancy": 0.0,
+      "context_precision": 0.0,
+      "context_recall": 0.0,
+      "answer_correctness": 0.0,
+      "overall": 0.0
+    },
+    "ragas_reasons": {
+      "faithfulness": "Error: Error code: 400 - {'error': {'message': \"Invalid type for 'messages': expected an array of objects, but got a string instead.\", 'type': 'invalid_request_error', 'param': 'messages', 'code': 'invalid_type'}}",
+      "answer_relevancy": "Error: Error code: 400 - {'error': {'message': \"Invalid type for 'messages': expected an array of objects, but got a string instead.\", 'type': 'invalid_request_error', 'param': 'messages', 'code': 'invalid_type'}}",
+      "context_precision": "Error: Error code: 400 - {'error': {'message': \"Invalid type for 'messages': expected an array of objects, but got a string instead.\", 'type': 'invalid_request_error', 'param': 'messages', 'code': 'invalid_type'}}",
+      "context_recall": "Error: Error code: 400 - {'error': {'message': \"Invalid type for 'messages': expected an array of objects, but got a string instead.\", 'type': 'invalid_request_error', 'param': 'messages', 'code': 'invalid_type'}}",
+      "answer_correctness": "Error: Error code: 400 - {'error': {'message': \"Invalid type for 'messages': expected an array of objects, but got a string instead.\", 'type': 'invalid_request_error', 'param': 'messages', 'code': 'invalid_type'}}"
+    }
+  }
+]

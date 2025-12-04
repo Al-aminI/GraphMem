@@ -1,0 +1,48 @@
+[
+  {
+    "system": "GraphMem",
+    "question_type": "temporal",
+    "query": "Between the report by The Verge on Google's impact on the internet's appearance published on November 1, 2023, and the TechCrunch article discussing the class action antitrust suit against Google publ",
+    "expected": "Yes",
+    "predicted": "The community summary and entities provided focus exclusively on NFL Week 13 wide receiver matchups, fantasy football analysis, and DFS considerations, with no information related to Google, its impact on the internet, or any antitrust lawsuits. Therefore, based on the available data, there is no information to assess or compare the portrayal of Google's influence on the internet and its stakeholders between the November 1, 2023 Verge report and the December 15, 2023 TechCrunch article. Conseque",
+    "context_preview": "Relevant Entities:\n- negative game script (Concept): Game scenario where a team is expected to fall behind, affecting player usage\n- Week 13 (Date/Time): The 13th week of the NFL season, focus of fantasy football analysis\n- DFS (Concept): Daily Fantasy Sports, context for lineup and value discussions\n- Sling (Organization): A streaming service offering live TV channels including NFL RedZone, with promotional offers\n- high-usage day (Concept): Game scenario where a player is expected to have many",
+    "ragas_scores": {
+      "faithfulness": 0.0,
+      "answer_relevancy": 0.0,
+      "context_precision": 0.0,
+      "context_recall": 0.0,
+      "answer_correctness": 0.0,
+      "overall": 0.0
+    },
+    "ragas_reasons": {
+      "faithfulness": "Error: Error code: 404 - {'error': {'code': '404', 'message': 'Resource not found'}}",
+      "answer_relevancy": "Error: Error code: 404 - {'error': {'code': '404', 'message': 'Resource not found'}}",
+      "context_precision": "Error: Error code: 404 - {'error': {'code': '404', 'message': 'Resource not found'}}",
+      "context_recall": "Error: Error code: 404 - {'error': {'code': '404', 'message': 'Resource not found'}}",
+      "answer_correctness": "Error: Error code: 404 - {'error': {'code': '404', 'message': 'Resource not found'}}"
+    }
+  },
+  {
+    "system": "NaiveRAG",
+    "question_type": "temporal",
+    "query": "Between the report by The Verge on Google's impact on the internet's appearance published on November 1, 2023, and the TechCrunch article discussing the class action antitrust suit against Google publ",
+    "expected": "Yes",
+    "predicted": "Error: Error code: 404 - {'error': {'code': '404', 'message': 'Resource not found'}}",
+    "context_preview": "",
+    "ragas_scores": {
+      "faithfulness": 0.0,
+      "answer_relevancy": 0.0,
+      "context_precision": 0.0,
+      "context_recall": 0.0,
+      "answer_correctness": 0.0,
+      "overall": 0.0
+    },
+    "ragas_reasons": {
+      "faithfulness": "Missing context or answer",
+      "answer_relevancy": "Error: Error code: 404 - {'error': {'code': '404', 'message': 'Resource not found'}}",
+      "context_precision": "Missing context",
+      "context_recall": "Missing context",
+      "answer_correctness": "Error: Error code: 404 - {'error': {'code': '404', 'message': 'Resource not found'}}"
+    }
+  }
+]
