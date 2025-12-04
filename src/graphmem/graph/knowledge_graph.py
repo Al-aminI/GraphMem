@@ -117,13 +117,36 @@ class KnowledgeGraph:
         self.llm = llm
         self.embeddings = embeddings
         self.store = store
-        self.entity_resolver = entity_resolver
         self.config = ExtractionConfig(
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
             max_triplets_per_chunk=max_triplets_per_chunk,
             max_workers=max_workers,
         )
+        
+        # Resolver factory (per-worker / per-call) to avoid shared-state contention
+        from graphmem.graph.entity_resolver import EntityResolver
+        if entity_resolver is None:
+            # Default thresholds
+            similarity_threshold = 0.85
+            token_threshold = 0.7
+            fuzzy_threshold = 0.92
+        else:
+            similarity_threshold = getattr(entity_resolver, "similarity_threshold", 0.85)
+            token_threshold = getattr(entity_resolver, "token_threshold", 0.7)
+            fuzzy_threshold = getattr(entity_resolver, "fuzzy_threshold", 0.92)
+        
+        def _factory():
+            return EntityResolver(
+                embeddings=self.embeddings,
+                similarity_threshold=similarity_threshold,
+                token_threshold=token_threshold,
+                fuzzy_threshold=fuzzy_threshold,
+            )
+        
+        self._resolver_factory = _factory
+        # Keep a prototype reference for compatibility but don't reuse it in parallel
+        self.entity_resolver = None
     
     def extract(
         self,
@@ -196,8 +219,9 @@ class KnowledgeGraph:
         if progress_callback:
             progress_callback("resolving", 0.5)
         
-        # Resolve entity duplicates (pass user_id for multi-tenant isolation)
-        nodes = self.entity_resolver.resolve(all_entities, memory_id, user_id)
+        # Resolve entity duplicates with a per-call resolver (no shared contention)
+        resolver = self._resolver_factory()
+        nodes = resolver.resolve(all_entities, memory_id, user_id)
         
         # Update edges with canonical names
         edges = self._resolve_edge_entities(all_relationships, nodes)
