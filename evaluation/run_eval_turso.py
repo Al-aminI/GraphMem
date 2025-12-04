@@ -385,14 +385,14 @@ class TursoEvaluator:
         gm_ingest_start = time.time()
         
         try:
-            # Try high-performance batch ingestion with 10 workers
-            # Infinite retry on rate limits - will never fail
+            # Try high-performance batch ingestion with AGGRESSIVE mode
+            # More workers, with retry logic for rate limits
             batch_result = gm.ingest_batch(
                 documents=documents,
-                max_workers=10,    # Hardcoded 10 workers
+                max_workers=None,  # Auto-detect optimal workers
                 show_progress=True,
-                auto_scale=False,  # Disable auto-scaling
-                aggressive=True,   # Enable retry logic
+                auto_scale=True,   # Enable hardware-aware scaling
+                aggressive=True,   # Use more workers (will retry on rate limits)
             )
             gm_ingest_errors = batch_result.get("documents_failed", 0)
             gm_docs_processed = batch_result.get("documents_processed", 0)
