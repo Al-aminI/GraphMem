@@ -725,17 +725,18 @@ class GraphMem:
         total_relationships = 0
         
         def ingest_single(doc):
-            """Ingest a single document with retry logic for rate limits."""
+            """Ingest a single document with infinite retry for rate limits."""
             nonlocal processed, failed, total_entities, total_relationships
             
             doc_id = doc.get("id", "unknown")
             content = doc.get("content", doc.get("text", ""))
             
-            # Retry logic for rate limits (429 errors)
-            max_retries = 5
+            # Infinite retry for rate limits (429 errors)
             base_delay = 2  # seconds
+            max_delay = 60  # cap at 60 seconds
+            attempt = 0
             
-            for attempt in range(max_retries):
+            while True:
                 try:
                     result = self.ingest(content, progress_callback=None)
                     
@@ -750,17 +751,18 @@ class GraphMem:
                     error_str = str(e).lower()
                     
                     # Check if it's a rate limit error (429)
-                    is_rate_limit = any(x in error_str for x in ['429', 'rate limit', 'too many requests', 'quota'])
+                    is_rate_limit = any(x in error_str for x in ['429', 'rate limit', 'too many requests', 'quota', 'retry'])
                     
-                    if is_rate_limit and attempt < max_retries - 1:
-                        # Exponential backoff: 2, 4, 8, 16, 32 seconds
-                        delay = base_delay * (2 ** attempt)
+                    if is_rate_limit:
+                        # Exponential backoff with cap: 2, 4, 8, 16, 32, 60, 60, 60...
+                        delay = min(base_delay * (2 ** attempt), max_delay)
+                        attempt += 1
                         if show_progress:
-                            logger.warning(f"   ⏳ Rate limit hit for {doc_id}, retry {attempt + 1}/{max_retries} in {delay}s")
+                            logger.warning(f"   ⏳ Rate limit hit for {doc_id}, retry #{attempt} in {delay}s...")
                         time.sleep(delay)
-                        continue
+                        continue  # Retry forever
                     
-                    # Not a rate limit or max retries reached
+                    # Not a rate limit error - actual failure
                     with results_lock:
                     failed += 1
                 
