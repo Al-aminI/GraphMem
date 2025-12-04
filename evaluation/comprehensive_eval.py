@@ -190,30 +190,24 @@ Respond with ONLY a JSON object:
 # ============================================================================
 @dataclass
 class RAGASMetrics:
-    """RAGAS-style evaluation metrics (0-1 scores)."""
+    """RAGAS-style evaluation - Answer Correctness only (simplified)."""
+    answer_correctness: float = 0.0
+    answer_correctness_reason: str = ""
+    
+    # Keep other fields for backwards compatibility but unused
     faithfulness: float = 0.0
     answer_relevancy: float = 0.0
     context_precision: float = 0.0
     context_recall: float = 0.0
-    answer_correctness: float = 0.0
-    
-    # Reasons from LLM judge
     faithfulness_reason: str = ""
     answer_relevancy_reason: str = ""
     context_precision_reason: str = ""
     context_recall_reason: str = ""
-    answer_correctness_reason: str = ""
     
     @property
     def overall_score(self) -> float:
-        """Weighted average of all metrics."""
-        return (
-            self.faithfulness * 0.2 +
-            self.answer_relevancy * 0.2 +
-            self.context_precision * 0.2 +
-            self.context_recall * 0.2 +
-            self.answer_correctness * 0.2
-        )
+        """Return answer correctness as the main score."""
+        return self.answer_correctness
 
 
 @dataclass
@@ -636,28 +630,8 @@ class RAGASEvaluator:
         answer: str, 
         ground_truth: str
     ) -> RAGASMetrics:
-        """Run all RAGAS evaluations."""
+        """Run RAGAS evaluation - only Answer Correctness (simplified)."""
         metrics = RAGASMetrics()
-        
-        # Faithfulness
-        metrics.faithfulness, metrics.faithfulness_reason = self.evaluate_faithfulness(
-            question, context, answer
-        )
-        
-        # Answer Relevancy
-        metrics.answer_relevancy, metrics.answer_relevancy_reason = self.evaluate_answer_relevancy(
-            question, answer
-        )
-        
-        # Context Precision
-        metrics.context_precision, metrics.context_precision_reason = self.evaluate_context_precision(
-            question, context
-        )
-        
-        # Context Recall
-        metrics.context_recall, metrics.context_recall_reason = self.evaluate_context_recall(
-            question, context, ground_truth
-        )
         
         # Answer Correctness
         metrics.answer_correctness, metrics.answer_correctness_reason = self.evaluate_answer_correctness(
@@ -949,17 +923,11 @@ class ComprehensiveEvaluator:
         if self.debug:
             status = "✅" if ragas.answer_correctness >= 0.5 else "❌"
             logger.info(f"\n{'='*70}")
-            logger.info(f"[{system}] {status} {q_type.upper()} | RAGAS: {ragas.overall_score:.2f}")
+            logger.info(f"[{system}] {status} {q_type.upper()} | Score: {ragas.answer_correctness:.2f}")
             logger.info(f"Q: {query[:100]}...")
             logger.info(f"Expected: {expected}")
             logger.info(f"Predicted: {predicted[:150]}...")
-            logger.info(f"Context: {context[:200]}..." if context else "Context: (none)")
-            logger.info(f"RAGAS Scores:")
-            logger.info(f"  Faithfulness: {ragas.faithfulness:.2f} - {ragas.faithfulness_reason[:80]}")
-            logger.info(f"  Relevancy:    {ragas.answer_relevancy:.2f} - {ragas.answer_relevancy_reason[:80]}")
-            logger.info(f"  Ctx Precision:{ragas.context_precision:.2f} - {ragas.context_precision_reason[:80]}")
-            logger.info(f"  Ctx Recall:   {ragas.context_recall:.2f} - {ragas.context_recall_reason[:80]}")
-            logger.info(f"  Correctness:  {ragas.answer_correctness:.2f} - {ragas.answer_correctness_reason[:80]}")
+            logger.info(f"Answer Correctness: {ragas.answer_correctness:.2f} - {ragas.answer_correctness_reason[:100]}")
             logger.info(f"{'='*70}")
     
     def _query_graphmem(self, gm: GraphMem, query: str) -> Tuple[str, str, TokenMetrics, LatencyMetrics]:
@@ -1404,26 +1372,20 @@ class ComprehensiveEvaluator:
         return self.graphmem_results, self.naive_results
     
     def _print_comparison(self):
-        """Print side-by-side comparison with RAGAS metrics."""
+        """Print side-by-side comparison with Answer Correctness."""
         gm = self.graphmem_results
         naive = self.naive_results
         
         print("\n" + "=" * 80)
-        print("📊 RESULTS: GraphMem vs Naive RAG (RAGAS Evaluation)")
+        print("📊 RESULTS: GraphMem vs Naive RAG")
         print("=" * 80)
         
-        # RAGAS SCORES
-        print("\n🎯 RAGAS SCORES (0-1, higher is better)")
+        # ANSWER CORRECTNESS (LLM-as-Judge)
+        print("\n🎯 ANSWER CORRECTNESS (LLM-as-Judge, 0-1)")
         print("-" * 70)
         print(f"{'Metric':<25} {'GraphMem':>20} {'NaiveRAG':>20}")
         print("-" * 70)
-        print(f"{'Faithfulness':<25} {gm.avg_faithfulness:>20.3f} {naive.avg_faithfulness:>20.3f}")
-        print(f"{'Answer Relevancy':<25} {gm.avg_answer_relevancy:>20.3f} {naive.avg_answer_relevancy:>20.3f}")
-        print(f"{'Context Precision':<25} {gm.avg_context_precision:>20.3f} {naive.avg_context_precision:>20.3f}")
-        print(f"{'Context Recall':<25} {gm.avg_context_recall:>20.3f} {naive.avg_context_recall:>20.3f}")
         print(f"{'Answer Correctness':<25} {gm.avg_answer_correctness:>20.3f} {naive.avg_answer_correctness:>20.3f}")
-        print("-" * 70)
-        print(f"{'OVERALL RAGAS SCORE':<25} {gm.avg_ragas_score:>20.3f} {naive.avg_ragas_score:>20.3f}")
         
         # LEGACY ACCURACY
         print("\n📋 LEGACY ACCURACY (string matching)")
