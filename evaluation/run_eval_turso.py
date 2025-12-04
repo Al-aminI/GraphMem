@@ -227,9 +227,9 @@ class TursoEvaluator:
         logger.info(f"🤖 Initializing LLM: {self.llm_provider}/{self.llm_model}")
         
         # Build LLM config based on provider
-        if self.llm_provider == "azure":
+        if self.llm_provider in ("azure", "azure_openai"):
             llm = LLMProvider(
-                provider="azure",
+                provider="azure_openai",
                 api_key=self.api_key,
                 api_base=self.azure_endpoint,
                 model=self.azure_deployment or self.llm_model,
@@ -246,9 +246,9 @@ class TursoEvaluator:
         logger.info(f"🔢 Initializing Embeddings: {self.embedding_provider}/{self.embedding_model}")
         
         # Build Embedding config based on provider
-        if self.embedding_provider == "azure":
+        if self.embedding_provider in ("azure", "azure_openai"):
             emb = EmbeddingProvider(
-                provider="azure",
+                provider="azure_openai",
                 api_key=self.api_key,
                 api_base=self.azure_endpoint,
                 model=self.azure_embedding_deployment or self.embedding_model,
@@ -281,16 +281,16 @@ class TursoEvaluator:
         logger.info(f"   Turso DB: {self.turso_db_path}")
         
         # Build config based on provider
-        if self.llm_provider == "azure":
+        if self.llm_provider in ("azure", "azure_openai"):
             config = MemoryConfig(
-                llm_provider="azure",
+                llm_provider="azure_openai",
                 llm_api_key=self.api_key,
                 llm_api_base=self.azure_endpoint,
                 llm_model=self.azure_deployment or self.llm_model,
                 azure_api_version=self.azure_api_version,
-                embedding_provider="azure" if self.embedding_provider == "azure" else self.embedding_provider,
+                embedding_provider="azure_openai" if self.embedding_provider in ("azure", "azure_openai") else self.embedding_provider,
                 embedding_api_key=self.api_key,
-                embedding_api_base=self.azure_endpoint if self.embedding_provider == "azure" else self.api_base,
+                embedding_api_base=self.azure_endpoint if self.embedding_provider in ("azure", "azure_openai") else self.api_base,
                 embedding_model=self.azure_embedding_deployment or self.embedding_model,
                 turso_db_path=self.turso_db_path,
             )
@@ -634,8 +634,8 @@ EXAMPLES:
     )
     
     # Provider selection
-    parser.add_argument("--provider", choices=["openrouter", "azure", "openai"], default="openrouter",
-                       help="LLM provider (default: openrouter)")
+    parser.add_argument("--provider", choices=["openrouter", "azure", "azure_openai", "openai"], default="openrouter",
+                       help="LLM provider (default: openrouter). 'azure' is alias for 'azure_openai'")
     parser.add_argument("--api-key", default=os.environ.get("API_KEY", ""), help="API key")
     
     # OpenRouter/OpenAI settings
@@ -679,7 +679,7 @@ EXAMPLES:
     n_qa = 2556 if args.full else args.qa_samples
     
     # Configure based on provider
-    if args.provider == "azure":
+    if args.provider in ("azure", "azure_openai"):
         if not args.azure_endpoint:
             args.azure_endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT") or input("Enter Azure endpoint: ").strip()
         if not args.azure_deployment:
@@ -694,8 +694,8 @@ EXAMPLES:
         
         evaluator = TursoEvaluator(
             api_key=api_key,
-            llm_provider="azure",
-            embedding_provider="azure",
+            llm_provider="azure_openai",
+            embedding_provider="azure_openai",
             azure_endpoint=args.azure_endpoint,
             azure_deployment=args.azure_deployment,
             azure_embedding_deployment=args.azure_embedding_deployment,

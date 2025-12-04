@@ -233,9 +233,9 @@ class Neo4jEvaluator:
         logger.info(f"🤖 Initializing LLM: {self.llm_provider}/{self.llm_model}")
         
         # Build LLM config based on provider
-        if self.llm_provider == "azure":
+        if self.llm_provider in ("azure", "azure_openai"):
             llm = LLMProvider(
-                provider="azure",
+                provider="azure_openai",
                 api_key=self.api_key,
                 api_base=self.azure_endpoint,
                 model=self.azure_deployment or self.llm_model,
@@ -252,9 +252,9 @@ class Neo4jEvaluator:
         logger.info(f"🔢 Initializing Embeddings: {self.embedding_provider}/{self.embedding_model}")
         
         # Build Embedding config based on provider
-        if self.embedding_provider == "azure":
+        if self.embedding_provider in ("azure", "azure_openai"):
             emb = EmbeddingProvider(
-                provider="azure",
+                provider="azure_openai",
                 api_key=self.api_key,
                 api_base=self.azure_endpoint,
                 model=self.azure_embedding_deployment or self.embedding_model,
@@ -283,16 +283,16 @@ class Neo4jEvaluator:
         logger.info(f"   Redis URL: {'Configured' if self.redis_url else 'Not configured'}")
         
         # Build config based on provider
-        if self.llm_provider == "azure":
+        if self.llm_provider in ("azure", "azure_openai"):
             config = MemoryConfig(
-                llm_provider="azure",
+                llm_provider="azure_openai",
                 llm_api_key=self.api_key,
                 llm_api_base=self.azure_endpoint,
                 llm_model=self.azure_deployment or self.llm_model,
                 azure_api_version=self.azure_api_version,
-                embedding_provider="azure" if self.embedding_provider == "azure" else self.embedding_provider,
+                embedding_provider="azure_openai" if self.embedding_provider in ("azure", "azure_openai") else self.embedding_provider,
                 embedding_api_key=self.api_key,
-                embedding_api_base=self.azure_endpoint if self.embedding_provider == "azure" else self.api_base,
+                embedding_api_base=self.azure_endpoint if self.embedding_provider in ("azure", "azure_openai") else self.api_base,
                 embedding_model=self.azure_embedding_deployment or self.embedding_model,
                 # NEO4J backend
                 neo4j_uri=self.neo4j_uri,
