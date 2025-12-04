@@ -764,10 +764,10 @@ class GraphMem:
                     
                     # Not a rate limit error - actual failure
                     with results_lock:
-                    failed += 1
-                
-                logger.warning(f"   ⚠️ Failed to ingest {doc_id}: {str(e)[:80]}")
-                return {"success": False, "doc_id": doc_id, "error": str(e)}
+                        failed += 1
+                    
+                    logger.warning(f"   ⚠️ Failed to ingest {doc_id}: {str(e)[:80]}")
+                    return {"success": False, "doc_id": doc_id, "error": str(e)}
         
         # Process documents in parallel
         results = []
