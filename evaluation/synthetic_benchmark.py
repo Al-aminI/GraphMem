@@ -806,16 +806,33 @@ class SyntheticBenchmarkEvaluator:
         gm = self._init_graphmem()
         rag = self._init_naive_rag()
         
-        # Ingest documents
+        # Ingest documents with CONTINUOUS EVOLUTION
         print(f"\n📥 Ingesting {len(challenge.documents)} documents...")
         
         docs_for_batch = [{"id": d.id, "content": d.content} for d in challenge.documents]
         
-        print("   GraphMem (with entity resolution + temporal validity)...")
-        gm.ingest_batch(documents=docs_for_batch, max_workers=20, aggressive=True)
-        gm.evolve()  # Consolidate entities, build relationships
+        print("   GraphMem (with CONTINUOUS evolution after every batch)...")
         
-        print("   Naive RAG (chunk + embed)...")
+        # Ingest in batches and evolve after each batch
+        # This is how production systems should work - continuous learning!
+        batch_size = max(10, len(docs_for_batch) // 5)  # ~5 evolution cycles
+        
+        for i in range(0, len(docs_for_batch), batch_size):
+            batch = docs_for_batch[i:i + batch_size]
+            gm.ingest_batch(documents=batch, max_workers=20, aggressive=True)
+            
+            # EVOLVE after each batch - continuous learning!
+            evolution_result = gm.evolve()
+            events = evolution_result.events if hasattr(evolution_result, 'events') else evolution_result
+            
+            consolidations = sum(1 for e in events if 'consolidat' in str(e.evolution_type).lower())
+            decays = sum(1 for e in events if 'decay' in str(e.evolution_type).lower())
+            
+            print(f"      Batch {i//batch_size + 1}: {len(batch)} docs → {consolidations} consolidations, {decays} decays")
+        
+        print(f"   ✓ GraphMem: {len(gm._memory.nodes)} entities, {len(gm._memory.edges)} relationships")
+        
+        print("   Naive RAG (chunk + embed - NO evolution)...")
         rag.ingest(challenge.documents)
         
         # Query and compare
