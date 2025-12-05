@@ -339,6 +339,9 @@ class KnowledgeGraph:
             response = self.llm.complete(prompt)
             entities, relationships = self._parse_extraction_response(response)
             
+            # LLM-BASED TEMPORAL REASONING for relationships without clear dates
+            relationships = self._llm_extract_temporal_context(chunk, relationships)
+            
             # Create nodes with embeddings and ALIASES
             nodes = []
             for entity_data in entities:
@@ -583,6 +586,100 @@ RELATIONSHIP: Elon Musk -> is CEO of -> Tesla | Elon Musk serves as CEO"""
             return date_match.group(1)
         
         return temporal_str  # Return as-is if can't parse
+    
+    def _llm_extract_temporal_context(
+        self,
+        text: str,
+        relationships: List[Tuple],
+    ) -> List[Tuple]:
+        """
+        LLM-BASED TEMPORAL REASONING
+        
+        Ask the LLM to reason about temporal validity for each relationship,
+        especially when dates aren't explicitly stated.
+        """
+        if not self.llm or not relationships:
+            return relationships
+        
+        # Find relationships without clear temporal data
+        needs_temporal = []
+        for i, rel in enumerate(relationships):
+            valid_from = rel[4] if len(rel) > 4 else None
+            valid_until = rel[5] if len(rel) > 5 else None
+            if not valid_from and not valid_until:
+                needs_temporal.append((i, rel))
+        
+        if not needs_temporal:
+            return relationships
+        
+        # Build prompt for LLM temporal reasoning
+        rel_descriptions = []
+        for idx, (i, rel) in enumerate(needs_temporal):
+            rel_descriptions.append(
+                f"{idx+1}. {rel[0]} --[{rel[2]}]--> {rel[1]}: {rel[3] if len(rel) > 3 else 'no description'}"
+            )
+        
+        prompt = f"""Analyze the temporal validity of these relationships based on the source text.
+
+SOURCE TEXT:
+{text[:2000]}
+
+RELATIONSHIPS TO ANALYZE:
+{chr(10).join(rel_descriptions)}
+
+For EACH relationship, determine:
+1. Is this a CURRENT/ONGOING relationship or a PAST relationship?
+2. When did it START? (year or "unknown")
+3. When did it END? ("present" if ongoing, year if ended, "unknown" if unclear)
+
+Look for clues like:
+- "was CEO" vs "is CEO" (past vs current)
+- "since 2020" (start date)
+- "from 2015 to 2018" (start and end)
+- "currently" or "now" (present)
+- Past tense verbs suggest ended relationships
+
+FORMAT (one line per relationship):
+<relationship_number>|<valid_from>|<valid_until>
+
+Example:
+1|2015|present
+2|2010|2018
+3|unknown|unknown"""
+
+        try:
+            response = self.llm.complete(prompt)
+            
+            # Parse response and update relationships
+            updated = list(relationships)
+            for line in response.strip().split('\n'):
+                if '|' not in line:
+                    continue
+                parts = line.strip().split('|')
+                if len(parts) >= 3:
+                    try:
+                        rel_num = int(parts[0].strip()) - 1
+                        valid_from = parts[1].strip()
+                        valid_until = parts[2].strip()
+                        
+                        if 0 <= rel_num < len(needs_temporal):
+                            orig_idx, orig_rel = needs_temporal[rel_num]
+                            # Update the relationship with temporal data
+                            new_rel = list(orig_rel)
+                            while len(new_rel) < 6:
+                                new_rel.append(None)
+                            new_rel[4] = self._parse_temporal(valid_from)
+                            new_rel[5] = self._parse_temporal(valid_until)
+                            updated[orig_idx] = tuple(new_rel)
+                            logger.debug(f"LLM temporal: {orig_rel[0]} -> {orig_rel[1]}: {valid_from} to {valid_until}")
+                    except (ValueError, IndexError):
+                        continue
+            
+            return updated
+            
+        except Exception as e:
+            logger.warning(f"LLM temporal reasoning failed: {e}")
+            return relationships
     
     def _parse_temporal_to_datetime(self, temporal_str: Optional[str]):
         """Convert temporal string to datetime object."""

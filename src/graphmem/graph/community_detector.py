@@ -236,57 +236,106 @@ class CommunityDetector:
         nodes: List[MemoryNode],
         edges: List[MemoryEdge],
     ) -> str:
-        """Generate a summary for a community."""
+        """
+        Generate an EXHAUSTIVE summary for a community.
+        
+        The summary explains:
+        1. WHAT this community IS about (entities, relationships, themes)
+        2. WHAT this community is NOT about (negative space for noise filtering)
+        3. TEMPORAL scope (when information is valid)
+        4. KEY FACTS that can be directly queried
+        """
         if not nodes:
             return "Empty community"
         
-        # Build relationship description
+        # Collect entity information
+        entity_descriptions = []
+        for node in nodes[:15]:
+            aliases = ""
+            if hasattr(node, 'aliases') and node.aliases:
+                aliases = f" [aliases: {', '.join(list(node.aliases)[:3])}]"
+            entity_descriptions.append(
+                f"• {node.name} ({node.entity_type}){aliases}: {node.description[:100] if node.description else 'no description'}"
+            )
+        
+        # Collect relationship information with temporal data
         relationships = []
-        for edge in edges[:20]:  # Limit for prompt length
+        temporal_info = []
+        for edge in edges[:20]:
             source_node = next((n for n in nodes if n.id == edge.source_id), None)
             target_node = next((n for n in nodes if n.id == edge.target_id), None)
             
             if source_node and target_node:
-                desc = edge.description or f"{edge.relation_type}"
-                relationships.append(
-                    f"{source_node.name} → {edge.relation_type} → {target_node.name}: {desc}"
-                )
+                desc = edge.description or edge.relation_type
+                rel_str = f"• {source_node.name} → {edge.relation_type} → {target_node.name}"
+                
+                # Add temporal validity
+                if hasattr(edge, 'valid_from') and edge.valid_from:
+                    from_str = edge.valid_from.strftime("%Y") if hasattr(edge.valid_from, 'strftime') else str(edge.valid_from)
+                    until_str = "present"
+                    if hasattr(edge, 'valid_until') and edge.valid_until:
+                        until_str = edge.valid_until.strftime("%Y") if hasattr(edge.valid_until, 'strftime') else str(edge.valid_until)
+                    rel_str += f" [valid: {from_str} to {until_str}]"
+                    temporal_info.append(f"{from_str}-{until_str}: {source_node.name} {edge.relation_type} {target_node.name}")
+                
+                relationships.append(rel_str)
         
-        if not relationships:
-            # No edges - just summarize entities
+        if not relationships and not entity_descriptions:
             entity_list = ", ".join(n.name for n in nodes[:10])
             return f"Group of related entities: {entity_list}"
         
-        relationship_text = "\n".join(relationships)
+        entity_text = "\n".join(entity_descriptions) if entity_descriptions else "No entity details"
+        relationship_text = "\n".join(relationships) if relationships else "No relationships"
+        temporal_text = "\n".join(temporal_info) if temporal_info else "No temporal information"
         
-        prompt = f"""You are analyzing relationships from a knowledge graph.
-Create a coherent summary that captures all key facts, relationships, and context.
+        prompt = f"""You are creating an EXHAUSTIVE knowledge base summary for a community of related entities.
 
-Relationships:
+ENTITIES IN THIS COMMUNITY:
+{entity_text}
+
+RELATIONSHIPS:
 {relationship_text}
 
-Write a comprehensive 2-3 sentence summary that:
-1. Identifies the main entities and their roles
-2. Describes how they are connected
-3. Captures the key theme or topic of this group
+TEMPORAL TIMELINE:
+{temporal_text}
 
-Summary:"""
+Create a comprehensive summary with the following sections:
+
+## ABOUT THIS COMMUNITY
+- Main theme/topic (one sentence)
+- Key entities and their roles
+- How they are connected
+
+## KEY FACTS (directly answerable questions)
+- List 3-5 specific facts that can be answered from this community
+- Example: "Alexander Chen is the founder of Quantum AI Labs"
+
+## TEMPORAL SCOPE
+- When is this information valid?
+- Are there relationships that have ended vs ongoing?
+- If asking about "current" X, which facts are still active?
+
+## NOT ABOUT (for noise filtering)
+- What topics/entities are SIMILAR but NOT in this community?
+- What questions would this community NOT be able to answer?
+- Help distinguish this from other communities
+
+## CONFIDENCE NOTES
+- What is well-established vs uncertain?
+- Are there conflicting facts?
+
+Write the summary:"""
         
         try:
             response = self.llm.complete(prompt)
             summary = response.strip()
-            
-            # Clean up
-            if summary.startswith("Summary:"):
-                summary = summary[8:].strip()
-            
             return summary
             
         except Exception as e:
-            logger.error(f"Summary generation failed: {e}")
-            # Fallback to simple concatenation
+            logger.error(f"Exhaustive summary generation failed: {e}")
+            # Fallback
             entity_names = [n.name for n in nodes[:5]]
-            return f"Group containing: {', '.join(entity_names)}"
+            return f"Community about: {', '.join(entity_names)}. Contains {len(nodes)} entities and {len(edges)} relationships."
     
     def _calculate_coherence(self, G, community: Set) -> float:
         """Calculate how well-connected the community is internally."""

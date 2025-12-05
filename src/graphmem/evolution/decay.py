@@ -34,10 +34,12 @@ class MemoryDecay:
     - Higher importance = slower decay
     - Frequently accessed memories decay slower
     - Memories can be archived (not deleted) for potential rehydration
+    - LLM-BASED REASONING for intelligent decay decisions
     """
     
     def __init__(
         self,
+        llm=None,  # NEW: LLM for intelligent decay decisions
         half_life_days: float = 30.0,
         min_importance_to_keep: MemoryImportance = MemoryImportance.VERY_LOW,
         archive_threshold: float = 0.2,  # Strength at which to archive
@@ -47,11 +49,13 @@ class MemoryDecay:
         Initialize decay handler.
         
         Args:
+            llm: Optional LLM for intelligent decay reasoning
             half_life_days: Time for memory strength to halve
             min_importance_to_keep: Minimum importance level to prevent decay
             archive_threshold: Strength threshold for archiving
             delete_threshold: Strength threshold for deletion
         """
+        self.llm = llm
         self.half_life_days = half_life_days
         self.min_importance_to_keep = min_importance_to_keep
         self.archive_threshold = archive_threshold
@@ -84,7 +88,111 @@ class MemoryDecay:
         edge_events = self._decay_edges(memory, current_time)
         events.extend(edge_events)
         
+        # LLM-based decay reasoning for temporal conflicts
+        if self.llm:
+            llm_events = self._llm_based_decay(memory, current_time)
+            events.extend(llm_events)
+        
         logger.info(f"Applied decay: {len(events)} elements affected")
+        return events
+    
+    def _llm_based_decay(
+        self,
+        memory: Memory,
+        current_time: datetime,
+    ) -> List[EvolutionEvent]:
+        """
+        LLM-BASED DECAY REASONING
+        
+        Ask the LLM to identify:
+        1. Outdated facts that conflict with newer ones
+        2. Temporal relationships that have ended
+        3. Redundant information that can be forgotten
+        """
+        events = []
+        
+        # Find edges with temporal validity
+        temporal_edges = []
+        for edge in memory.edges.values():
+            if edge.valid_from or edge.valid_until:
+                source_node = memory.nodes.get(edge.source_id)
+                target_node = memory.nodes.get(edge.target_id)
+                source_name = source_node.name if source_node else edge.source_id
+                target_name = target_node.name if target_node else edge.target_id
+                
+                valid_from = edge.valid_from.strftime("%Y") if edge.valid_from else "unknown"
+                valid_until = edge.valid_until.strftime("%Y") if edge.valid_until else "present"
+                
+                temporal_edges.append({
+                    "id": edge.id,
+                    "description": f"{source_name} --[{edge.relation_type}]--> {target_name}",
+                    "valid_from": valid_from,
+                    "valid_until": valid_until,
+                    "edge": edge,
+                })
+        
+        if len(temporal_edges) < 2:
+            return events  # Need multiple edges to find conflicts
+        
+        # Ask LLM to identify outdated relationships
+        edge_descriptions = []
+        for i, te in enumerate(temporal_edges[:30]):  # Limit for prompt size
+            edge_descriptions.append(
+                f"{i+1}. {te['description']} [valid: {te['valid_from']} to {te['valid_until']}]"
+            )
+        
+        prompt = f"""Analyze these temporal relationships and identify which ones are OUTDATED or should DECAY.
+
+RELATIONSHIPS WITH TEMPORAL INFO:
+{chr(10).join(edge_descriptions)}
+
+CURRENT DATE: {current_time.strftime("%Y-%m-%d")}
+
+Identify relationships that:
+1. Have ended (valid_until is in the past)
+2. Conflict with more recent relationships (e.g., old CEO vs new CEO)
+3. Represent superseded facts
+
+For each outdated relationship, output:
+<number>|DECAY|<reason>
+
+Only list relationships that should decay. Be conservative - don't decay relationships that might still be relevant.
+
+OUTPUT:"""
+
+        try:
+            response = self.llm.complete(prompt)
+            
+            for line in response.strip().split('\n'):
+                if '|DECAY|' not in line:
+                    continue
+                parts = line.split('|')
+                if len(parts) >= 3:
+                    try:
+                        edge_num = int(parts[0].strip()) - 1
+                        reason = parts[2].strip()
+                        
+                        if 0 <= edge_num < len(temporal_edges):
+                            edge_info = temporal_edges[edge_num]
+                            edge = edge_info["edge"]
+                            
+                            # Mark the edge's source/target nodes for decay consideration
+                            logger.info(f"🧠 LLM identified outdated: {edge_info['description']} - {reason}")
+                            
+                            events.append(EvolutionEvent(
+                                evolution_type=EvolutionType.DECAY,
+                                memory_id=memory.id,
+                                affected_edges=[edge.id],
+                                before_state={"state": "active"},
+                                after_state={"state": "decayed"},
+                                reason=f"LLM decay reasoning: {reason}",
+                            ))
+                    except (ValueError, IndexError):
+                        continue
+                        
+        except Exception as e:
+            logger.warning(f"LLM decay reasoning failed: {e}")
+        
         return events
     
     def _decay_nodes(

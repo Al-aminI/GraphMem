@@ -81,6 +81,7 @@ class MemoryEvolution:
         )
         
         self.decay = MemoryDecay(
+            llm=llm,  # LLM for intelligent decay reasoning
             half_life_days=decay_half_life_days,
         ) if decay_enabled else None
         
