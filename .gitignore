@@ -89,3 +89,4 @@ evaluation/results/
 synthetic_results*.json
 final_results.json
 benchmark_reference/
+evaluation/data/memory_agent_bench_sample.json
