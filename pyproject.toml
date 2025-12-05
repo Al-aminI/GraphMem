@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agentic-graph-mem"
-version = "1.8.2"
+version = "1.8.3"
 description = "Production-Grade Agent Memory Framework for Agentic AI"
 readme = "README.md"
 license = { text = "MIT" }
