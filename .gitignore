@@ -88,3 +88,4 @@ evaluation/results/
 *.db
 synthetic_results*.json
 final_results.json
+benchmark_reference/
