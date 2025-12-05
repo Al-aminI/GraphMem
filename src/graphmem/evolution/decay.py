@@ -108,60 +108,101 @@ class MemoryDecay:
         1. Outdated facts that conflict with newer ones
         2. Temporal relationships that have ended
         3. Redundant information that can be forgotten
+        4. CONFLICTING relationships (same source, same relation type, different targets)
         """
         events = []
         
-        # Find edges with temporal validity
-        temporal_edges = []
+        # AGGRESSIVE: Analyze ALL relationships, not just ones with temporal validity
+        # Look for CONFLICTS: same entity with conflicting information
+        all_edges = []
         for edge in memory.edges.values():
-            if edge.valid_from or edge.valid_until:
-                source_node = memory.nodes.get(edge.source_id)
-                target_node = memory.nodes.get(edge.target_id)
-                source_name = source_node.name if source_node else edge.source_id
-                target_name = target_node.name if target_node else edge.target_id
-                
-                valid_from = edge.valid_from.strftime("%Y") if edge.valid_from else "unknown"
-                valid_until = edge.valid_until.strftime("%Y") if edge.valid_until else "present"
-                
-                temporal_edges.append({
-                    "id": edge.id,
-                    "description": f"{source_name} --[{edge.relation_type}]--> {target_name}",
-                    "valid_from": valid_from,
-                    "valid_until": valid_until,
-                    "edge": edge,
-                })
+            source_node = memory.nodes.get(edge.source_id)
+            target_node = memory.nodes.get(edge.target_id)
+            source_name = source_node.name if source_node else edge.source_id
+            target_name = target_node.name if target_node else edge.target_id
+            
+            valid_from = "unknown"
+            valid_until = "present"
+            if edge.valid_from:
+                valid_from = edge.valid_from.strftime("%Y") if hasattr(edge.valid_from, 'strftime') else str(edge.valid_from)
+            if edge.valid_until:
+                valid_until = edge.valid_until.strftime("%Y") if hasattr(edge.valid_until, 'strftime') else str(edge.valid_until)
+            
+            all_edges.append({
+                "id": edge.id,
+                "source": source_name,
+                "target": target_name,
+                "relation": edge.relation_type,
+                "description": f"{source_name} --[{edge.relation_type}]--> {target_name}",
+                "valid_from": valid_from,
+                "valid_until": valid_until,
+                "edge": edge,
+            })
         
-        if len(temporal_edges) < 2:
-            return events  # Need multiple edges to find conflicts
+        if len(all_edges) < 5:
+            return events  # Need enough edges to find conflicts
         
-        # Ask LLM to identify outdated relationships
+        # Group edges by source + relation type to find conflicts
+        from collections import defaultdict
+        edge_groups = defaultdict(list)
+        for edge_info in all_edges:
+            key = f"{edge_info['source'].lower()}|{edge_info['relation'].lower()}"
+            edge_groups[key].append(edge_info)
+        
+        # Find groups with potential conflicts (same source+relation, different targets)
+        conflict_candidates = []
+        for key, edges in edge_groups.items():
+            if len(edges) > 1:
+                # Multiple targets for same source+relation = potential conflict
+                targets = set(e['target'].lower() for e in edges)
+                if len(targets) > 1:
+                    conflict_candidates.extend(edges)
+        
+        # If no conflict candidates, fall back to temporal analysis
+        temporal_edges = [e for e in all_edges if e['valid_from'] != 'unknown' or e['valid_until'] != 'present']
+        
+        edges_to_analyze = conflict_candidates if conflict_candidates else temporal_edges[:30]
+        
+        if len(edges_to_analyze) < 2:
+            return events
+        
+        logger.info(f"🧠 LLM decay analyzing {len(edges_to_analyze)} relationships for conflicts...")
+        
+        # Build edge descriptions for LLM
         edge_descriptions = []
-        for i, te in enumerate(temporal_edges[:30]):  # Limit for prompt size
-            edge_descriptions.append(
-                f"{i+1}. {te['description']} [valid: {te['valid_from']} to {te['valid_until']}]"
-            )
+        for i, e in enumerate(edges_to_analyze[:40]):  # Limit for prompt size
+            temporal_info = f"[valid: {e['valid_from']} to {e['valid_until']}]"
+            edge_descriptions.append(f"{i+1}. {e['description']} {temporal_info}")
         
-        prompt = f"""Analyze these temporal relationships and identify which ones are OUTDATED or should DECAY.
+        # Identify if we're looking at conflicts
+        has_conflicts = len(conflict_candidates) > 0
+        
+        prompt = f"""Analyze these knowledge graph relationships and identify which ones are OUTDATED, SUPERSEDED, or should DECAY.
 
-RELATIONSHIPS WITH TEMPORAL INFO:
+RELATIONSHIPS TO ANALYZE:
 {chr(10).join(edge_descriptions)}
 
 CURRENT DATE: {current_time.strftime("%Y-%m-%d")}
 
+{"NOTE: Some relationships have CONFLICTING targets for the same source and relation type. The NEWER information should supersede the OLDER." if has_conflicts else ""}
+
 Identify relationships that:
-1. Have ended (valid_until is in the past)
-2. Conflict with more recent relationships (e.g., old CEO vs new CEO)
-3. Represent superseded facts
+1. Are OUTDATED (superseded by newer information)
+2. CONFLICT with more recent relationships (e.g., old CEO vs new CEO, old location vs new)
+3. Represent historical facts that have been REPLACED
+
+CRITICAL: When the SAME entity has MULTIPLE values for the SAME relation (e.g., "Person X is CEO of Company A" AND "Person Y is CEO of Company A"), the OLDER one should decay.
 
 For each outdated relationship, output:
 <number>|DECAY|<reason>
 
-Only list relationships that should decay. Be conservative - don't decay relationships that might still be relevant.
+Only list relationships that should decay. If unsure, don't decay.
 
 OUTPUT:"""
 
         try:
             response = self.llm.complete(prompt)
+            decay_count = 0
             
             for line in response.strip().split('\n'):
                 if '|DECAY|' not in line:
@@ -172,12 +213,12 @@ OUTPUT:"""
                         edge_num = int(parts[0].strip()) - 1
                         reason = parts[2].strip()
                         
-                        if 0 <= edge_num < len(temporal_edges):
-                            edge_info = temporal_edges[edge_num]
+                        if 0 <= edge_num < len(edges_to_analyze):
+                            edge_info = edges_to_analyze[edge_num]
                             edge = edge_info["edge"]
                             
-                            # Mark the edge's source/target nodes for decay consideration
-                            logger.info(f"🧠 LLM identified outdated: {edge_info['description']} - {reason}")
+                            # Mark the edge as decayed
+                            logger.info(f"🧠 LLM decay: {edge_info['description']} - {reason}")
                             
                             events.append(EvolutionEvent(
                                 evolution_type=EvolutionType.DECAY,
@@ -185,10 +226,14 @@ OUTPUT:"""
                                 affected_edges=[edge.id],
                                 before_state={"state": "active"},
                                 after_state={"state": "decayed"},
-                                reason=f"LLM decay reasoning: {reason}",
+                                reason=f"LLM conflict resolution: {reason}",
                             ))
+                            decay_count += 1
                     except (ValueError, IndexError):
                         continue
+            
+            if decay_count > 0:
+                logger.info(f"🧠 LLM identified {decay_count} outdated relationships")
                         
         except Exception as e:
             logger.warning(f"LLM decay reasoning failed: {e}")

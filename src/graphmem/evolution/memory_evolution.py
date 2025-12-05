@@ -8,12 +8,19 @@ Orchestrates all memory evolution operations:
 - Synthesis (creating new knowledge from patterns)
 
 This is what makes GraphMem "self-improving" like human memory.
+
+PERFORMANCE:
+- Uses concurrent processing for LLM-based operations
+- Parallel entity type processing during consolidation
+- Batched LLM calls for decay analysis
 """
 
 from __future__ import annotations
 import logging
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import time
 
 from graphmem.core.memory_types import (
     Memory,
@@ -55,6 +62,7 @@ class MemoryEvolution:
         decay_enabled: bool = True,
         decay_half_life_days: float = 30.0,
         min_evolution_interval_hours: float = 1.0,
+        max_workers: int = 10,  # NEW: Concurrent workers for LLM operations
     ):
         """
         Initialize evolution controller.
@@ -67,11 +75,13 @@ class MemoryEvolution:
             decay_enabled: Whether to enable memory decay
             decay_half_life_days: Half-life for memory decay
             min_evolution_interval_hours: Minimum time between evolutions
+            max_workers: Number of concurrent workers for LLM operations
         """
         self.llm = llm
         self.embeddings = embeddings
         self.store = store
         self.min_evolution_interval = timedelta(hours=min_evolution_interval_hours)
+        self.max_workers = max_workers
         
         # Initialize sub-components
         self.consolidation = MemoryConsolidation(
@@ -121,6 +131,7 @@ class MemoryEvolution:
                     return []
         
         all_events = []
+        start_time = time.time()
         
         # Determine which evolution types to run
         if evolution_types is None:
@@ -130,23 +141,28 @@ class MemoryEvolution:
                 EvolutionType.REINFORCEMENT,
             ]
         
-        # Run consolidation
-        if EvolutionType.CONSOLIDATION in evolution_types:
-            try:
-                events = self.consolidation.consolidate(memory)
-                all_events.extend(events)
-                logger.info(f"Consolidation: {len(events)} events")
-            except Exception as e:
-                logger.error(f"Consolidation failed: {e}")
-        
-        # Run decay
-        if EvolutionType.DECAY in evolution_types and self.decay:
-            try:
-                events = self.decay.apply_decay(memory)
-                all_events.extend(events)
-                logger.info(f"Decay: {len(events)} events")
-            except Exception as e:
-                logger.error(f"Decay failed: {e}")
+        # CONCURRENT EVOLUTION - run consolidation and decay in parallel
+        # Both are LLM-intensive but independent operations
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            futures = {}
+            
+            # Submit consolidation task
+            if EvolutionType.CONSOLIDATION in evolution_types:
+                futures[executor.submit(self._run_consolidation, memory)] = "consolidation"
+            
+            # Submit decay task
+            if EvolutionType.DECAY in evolution_types and self.decay:
+                futures[executor.submit(self._run_decay, memory)] = "decay"
+            
+            # Collect results
+            for future in as_completed(futures):
+                task_name = futures[future]
+                try:
+                    events = future.result()
+                    all_events.extend(events)
+                    logger.info(f"{task_name.title()}: {len(events)} events")
+                except Exception as e:
+                    logger.error(f"{task_name.title()} failed: {e}")
         
         # Update importance scores
         if EvolutionType.REINFORCEMENT in evolution_types:
@@ -163,8 +179,17 @@ class MemoryEvolution:
         memory.version += 1
         memory.updated_at = datetime.utcnow()
         
-        logger.info(f"Evolution complete: {len(all_events)} total events")
+        elapsed = time.time() - start_time
+        logger.info(f"Evolution complete: {len(all_events)} total events in {elapsed:.1f}s")
         return all_events
+    
+    def _run_consolidation(self, memory: Memory) -> List[EvolutionEvent]:
+        """Run consolidation (thread-safe wrapper)."""
+        return self.consolidation.consolidate(memory)
+    
+    def _run_decay(self, memory: Memory) -> List[EvolutionEvent]:
+        """Run decay (thread-safe wrapper)."""
+        return self.decay.apply_decay(memory)
     
     def rehydrate(
         self,

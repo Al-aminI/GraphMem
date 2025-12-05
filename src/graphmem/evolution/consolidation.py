@@ -139,21 +139,38 @@ class MemoryConsolidation:
             key = node.entity_type.lower() if node.entity_type else "unknown"
             type_groups.setdefault(key, []).append(node)
         
-        # Find merge candidates within each type using LLM
+        # Find merge candidates within each type using LLM - CONCURRENT
         all_merge_groups: List[Set[str]] = []
         
-        for entity_type, type_nodes in type_groups.items():
+        # Process entity types in parallel for faster consolidation
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        
+        def process_entity_type(entity_type: str, type_nodes: List[MemoryNode]) -> List[Set[str]]:
+            """Process single entity type (thread-safe)."""
             if len(type_nodes) < 2:
-                continue
+                return []
             
             # Use LLM to identify duplicates (if available)
             if self.llm and len(type_nodes) <= 50:  # Limit to avoid token overflow
-                merge_groups = self._llm_find_duplicates(type_nodes, entity_type)
-                all_merge_groups.extend(merge_groups)
+                return self._llm_find_duplicates(type_nodes, entity_type)
             else:
                 # Fallback to embedding-based matching for large sets
-                merge_groups = self._embedding_find_duplicates(type_nodes)
-                all_merge_groups.extend(merge_groups)
+                return self._embedding_find_duplicates(type_nodes)
+        
+        # Use ThreadPool to process entity types concurrently
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            futures = {
+                executor.submit(process_entity_type, entity_type, type_nodes): entity_type
+                for entity_type, type_nodes in type_groups.items()
+            }
+            
+            for future in as_completed(futures):
+                entity_type = futures[future]
+                try:
+                    merge_groups = future.result()
+                    all_merge_groups.extend(merge_groups)
+                except Exception as e:
+                    logger.warning(f"Entity type '{entity_type}' processing failed: {e}")
         
         # Perform merges
         processed_nodes = set()
