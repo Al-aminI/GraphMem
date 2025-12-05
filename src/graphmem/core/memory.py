@@ -478,6 +478,7 @@ class GraphMem:
             embeddings=self._embeddings,
             store=self._graph_store,
             cache=self._cache,
+            llm=self._llm,  # For LLM-based alias expansion during retrieval
             top_k=self.config.similarity_top_k,
             min_similarity=self.config.min_similarity_threshold,
             memory_id=self.memory_id,  # For Neo4j vector search

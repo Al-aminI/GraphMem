@@ -365,8 +365,59 @@ class MemoryConsolidation:
             if similarity >= 0.75:
                 logger.debug(f"Embedding match: '{name_a}' ≈ '{name_b}' (sim={similarity:.2f})")
                 return True
+            
+            # ===== LLM-BASED SIMILARITY CHECK (FINAL AUTHORITY) =====
+            # If embedding similarity is moderate (0.5-0.75), ask the LLM
+            if similarity >= 0.50 and self.llm is not None:
+                if self._llm_confirms_same_entity(node_a, node_b):
+                    return True
         
         return False
+    
+    def _llm_confirms_same_entity(
+        self,
+        node_a: MemoryNode,
+        node_b: MemoryNode,
+    ) -> bool:
+        """Use LLM to determine if two entities are the same."""
+        if self.llm is None:
+            return False
+        
+        try:
+            prompt = f"""You are an entity resolution expert. Determine if these two entities refer to the SAME real-world thing.
+
+ENTITY A:
+- Name: {node_a.name}
+- Type: {node_a.entity_type}
+- Aliases: {', '.join(node_a.aliases) if node_a.aliases else 'None'}
+- Description: {node_a.description[:200] if node_a.description else 'None'}
+
+ENTITY B:
+- Name: {node_b.name}
+- Type: {node_b.entity_type}
+- Aliases: {', '.join(node_b.aliases) if node_b.aliases else 'None'}
+- Description: {node_b.description[:200] if node_b.description else 'None'}
+
+Consider:
+- "Dr. Chen" and "Alexander Chen" could be the same person
+- "SpaceX" and "Space Exploration Technologies Corp" are the same company
+- Different people can share names if context differs
+
+Answer ONLY with "YES" (same entity) or "NO" (different entities):"""
+
+            response = self.llm.complete(prompt)
+            answer = response.strip().upper()
+            
+            if "YES" in answer:
+                logger.info(f"🤖 LLM confirmed: '{node_a.name}' = '{node_b.name}'")
+                return True
+            else:
+                logger.debug(f"🤖 LLM rejected: '{node_a.name}' ≠ '{node_b.name}'")
+                return False
+                
+        except Exception as e:
+            logger.warning(f"LLM entity check failed: {e}")
+            return False
     
     def _share_last_name(self, name_a: str, name_b: str) -> bool:
         """Check if two names share a last name (for person entities)."""

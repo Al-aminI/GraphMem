@@ -38,6 +38,7 @@ class MemoryRetriever:
         embeddings,
         store,
         cache=None,
+        llm=None,  # NEW: LLM for alias expansion
         top_k: int = 10,
         min_similarity: float = 0.5,
         memory_id: Optional[str] = None,
@@ -50,6 +51,7 @@ class MemoryRetriever:
             embeddings: Embedding provider
             store: Graph store (Neo4jStore for vector search, or InMemoryStore)
             cache: Optional cache
+            llm: Optional LLM for alias expansion during retrieval
             top_k: Default number of results
             min_similarity: Minimum similarity threshold
             memory_id: Memory ID (used for Neo4j vector search)
@@ -58,6 +60,7 @@ class MemoryRetriever:
         self.embeddings = embeddings
         self.store = store
         self.cache = cache
+        self.llm = llm  # For LLM-based alias expansion
         self.top_k = top_k
         self.min_similarity = min_similarity
         self.memory_id = memory_id
@@ -106,6 +109,15 @@ class MemoryRetriever:
         # This prevents retrieving noise entities!
         exact_matches = self._find_exact_name_matches(query.query, memory)
         
+        # ===== STEP 1.5: LLM ALIAS EXPANSION (if no exact matches) =====
+        # If we can't find exact matches, ask the LLM which entities match
+        if not exact_matches and self.llm is not None:
+            logger.debug("No exact matches found, using LLM alias expansion...")
+            llm_matches = self._llm_expand_aliases(query.query, memory)
+            if llm_matches:
+                exact_matches = llm_matches
+                logger.info(f"🤖 LLM found {len(llm_matches)} matching entities")
+        
         # ===== STEP 2: SEMANTIC SEARCH =====
         node_results = self.semantic_search.search(
             query=query.query,
@@ -125,20 +137,34 @@ class MemoryRetriever:
                 scores[node.id] = 1.0  # Perfect score for exact match
                 logger.debug(f"Exact match: '{node.name}' in query")
         
-        # Add semantic search results
-        for node, score in node_results:
-            if node.id not in scores:
-                nodes.append(node)
-                scores[node.id] = score
-            else:
-                # Boost score if also found by semantic search
-                scores[node.id] = min(1.0, scores[node.id] + score * 0.2)
+        # ===== NOISE FILTERING =====
+        # If we have exact matches, be VERY selective about what else we include
+        # This prevents noise entities from diluting the context
+        if exact_matches:
+            # Only add semantic results that are HIGHLY relevant (>0.75)
+            for node, score in node_results:
+                if node.id not in scores:
+                    if score >= 0.75:  # High threshold when we have exact matches
+                        nodes.append(node)
+                        scores[node.id] = score * 0.8  # Discount vs exact matches
+                else:
+                    # Boost score if also found by semantic search
+                    scores[node.id] = min(1.0, scores[node.id] + score * 0.2)
+            logger.debug(f"Noise filtering: {len(exact_matches)} exact + {len(nodes)-len(exact_matches)} high-relevance")
+        else:
+            # No exact matches - use all semantic search results
+            for node, score in node_results:
+                if node.id not in scores:
+                    nodes.append(node)
+                    scores[node.id] = score
+                else:
+                    scores[node.id] = min(1.0, scores[node.id] + score * 0.2)
         
-        # Expand via graph traversal - MORE HOPS for exact matches
+        # Expand via graph traversal - DEEP TRAVERSAL for chain queries
         edges = []
         if nodes:
-            # Use more hops if we have exact name matches (likely a specific query)
-            max_hops = 3 if exact_matches else 1
+            # Use 6+ hops for deep chain traversal (needed for multi-hop reasoning)
+            max_hops = 6 if exact_matches else 2
             
             expanded_nodes, edges = self._expand_graph(
                 initial_nodes=nodes,
@@ -146,11 +172,11 @@ class MemoryRetriever:
                 max_hops=max_hops,
             )
             
-            # Add expanded nodes (with lower scores based on hop distance)
+            # Add expanded nodes with decreasing scores by hop distance
             for node in expanded_nodes:
                 if node.id not in scores:
                     nodes.append(node)
-                    scores[node.id] = 0.4  # Lower score for expanded
+                    scores[node.id] = 0.5  # Expanded nodes still important
         
         # Get relevant clusters
         clusters = []
@@ -178,49 +204,149 @@ class MemoryRetriever:
         """
         Find entities that are EXPLICITLY mentioned by name in the query.
         
-        This is CRITICAL for avoiding noise:
-        - Query: "Who is the CEO of Helix Quantum Computing?"
-        - Should prioritize "Helix Quantum Computing" entity over other companies
+        COMPREHENSIVE ALIAS SEARCH:
+        - Query: "What did Alexander Chen found?"
+        - Entity has aliases: ["Dr. Chen", "The Quantum Pioneer", "A. Chen"]
+        - Should find the entity even if query uses canonical name not in docs
         
-        Matches against:
-        - Entity name
-        - Entity aliases
-        - Canonical name
+        Also does REVERSE lookup:
+        - If query contains ANY alias, find the canonical entity
         """
         import re
         
         query_lower = query.lower()
+        query_words = set(query_lower.split())
         matches = []
         matched_ids = set()
         
+        # Build reverse alias index: alias -> node
+        alias_to_node = {}
         for node in memory.nodes.values():
+            # Index by name
+            alias_to_node[node.name.lower()] = node
+            if node.canonical_name:
+                alias_to_node[node.canonical_name.lower()] = node
+            # Index by ALL aliases
+            if hasattr(node, 'aliases') and node.aliases:
+                for alias in node.aliases:
+                    alias_to_node[alias.lower()] = node
+        
+        # PASS 1: Find entities whose name/alias appears in query
+        for node in memory.nodes.values():
+            if node.id in matched_ids:
+                continue
+                
             # Check entity name
             if node.name.lower() in query_lower:
-                if node.id not in matched_ids:
-                    matches.append(node)
-                    matched_ids.add(node.id)
-                    continue
+                matches.append(node)
+                matched_ids.add(node.id)
+                continue
             
             # Check canonical name
             if node.canonical_name and node.canonical_name.lower() in query_lower:
+                matches.append(node)
+                matched_ids.add(node.id)
+                continue
+            
+            # Check ALL aliases (comprehensive)
+            if hasattr(node, 'aliases') and node.aliases:
+                for alias in node.aliases:
+                    alias_lower = alias.lower()
+                    if len(alias) >= 3 and alias_lower in query_lower:
+                        matches.append(node)
+                        matched_ids.add(node.id)
+                        break
+        
+        # PASS 2: Extract potential entity names from query and lookup
+        # This catches cases where query uses a name that IS an alias
+        potential_names = self._extract_potential_names(query)
+        for name in potential_names:
+            name_lower = name.lower()
+            if name_lower in alias_to_node:
+                node = alias_to_node[name_lower]
                 if node.id not in matched_ids:
                     matches.append(node)
                     matched_ids.add(node.id)
-                    continue
-            
-            # Check aliases
-            if hasattr(node, 'aliases') and node.aliases:
-                for alias in node.aliases:
-                    if len(alias) >= 3 and alias.lower() in query_lower:
-                        if node.id not in matched_ids:
-                            matches.append(node)
-                            matched_ids.add(node.id)
-                            break
+                    logger.debug(f"Found via alias lookup: '{name}' → {node.name}")
         
         if matches:
             logger.info(f"🎯 Exact name matches: {[n.name for n in matches]}")
         
         return matches
+    
+    def _extract_potential_names(self, query: str) -> List[str]:
+        """Extract potential entity names from a query."""
+        import re
+        
+        # Extract quoted strings
+        quoted = re.findall(r'"([^"]+)"', query)
+        
+        # Extract capitalized phrases (likely proper nouns)
+        # e.g., "Alexander Chen", "Helix Quantum Computing"
+        capitalized = re.findall(r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\b', query)
+        
+        # Extract title + name patterns
+        # e.g., "Dr. Chen", "CEO Johnson"
+        titled = re.findall(r'\b((?:Dr\.|Mr\.|Ms\.|Mrs\.|Prof\.|CEO|CTO|CFO)\s*[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\b', query)
+        
+        return list(set(quoted + capitalized + titled))
+    
+    def _llm_expand_aliases(self, query: str, memory: Memory) -> List[MemoryNode]:
+        """
+        Use LLM to find entities that match the query, even with different names.
+        
+        This is the ULTIMATE fallback - ask the LLM directly which entities
+        from our knowledge base match what the user is asking about.
+        """
+        if self.llm is None:
+            return []
+        
+        # Get all entity names from memory
+        entity_list = []
+        for node in list(memory.nodes.values())[:100]:  # Limit for prompt size
+            aliases_str = f" (aliases: {', '.join(list(node.aliases)[:3])})" if node.aliases else ""
+            entity_list.append(f"- {node.name}{aliases_str}: {node.entity_type}")
+        
+        if not entity_list:
+            return []
+        
+        try:
+            prompt = f"""Given this user query and list of entities in our knowledge base, identify which entities are RELEVANT to answering the query.
+
+USER QUERY: {query}
+
+ENTITIES IN KNOWLEDGE BASE:
+{chr(10).join(entity_list[:50])}
+
+INSTRUCTIONS:
+- The query might use different names/aliases for the same entity
+- "Alexander Chen" could be "Dr. Chen" or "A. Chen"
+- "Helix Quantum Computing" could be "Helix QC" or "HQC"
+- List ONLY the exact entity names from above that are relevant
+- One entity name per line
+- If no entities are relevant, respond with "NONE"
+
+RELEVANT ENTITIES:"""
+
+            response = self.llm.complete(prompt)
+            
+            # Parse response - extract entity names
+            matches = []
+            for line in response.strip().split('\n'):
+                line = line.strip().lstrip('- ').strip()
+                if line and line.upper() != "NONE":
+                    # Find matching node
+                    for node in memory.nodes.values():
+                        if node.name.lower() == line.lower():
+                            matches.append(node)
+                            logger.info(f"🤖 LLM alias match: query='{query[:30]}' → entity='{node.name}'")
+                            break
+            
+            return matches
+            
+        except Exception as e:
+            logger.warning(f"LLM alias expansion failed: {e}")
+            return []
     
     def _expand_graph(
         self,
