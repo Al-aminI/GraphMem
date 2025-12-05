@@ -95,27 +95,49 @@ class QueryEngine:
                 latency_ms=(time.time() - start_time) * 1000,
             )
         
-        # Generate answers from communities
-        # IMPORTANT: Pass ALL nodes and edges from memory for cross-cluster visibility
-        # This ensures communities can see entities connected to them even if not in the same cluster
-        all_nodes = list(memory.nodes.values()) if memory.nodes else nodes
-        all_edges = list(memory.edges.values()) if memory.edges else edges
+        # ===== PRIORITIZE DIRECT ENTITY ANSWERS =====
+        # If we found specific entities, use them DIRECTLY instead of community summaries
+        # This is critical for avoiding noise pollution from other entities
         
-        community_answers = self._query_communities(
-            query=query.query,
-            clusters=clusters,
-            nodes=all_nodes,
-            edges=all_edges,
-        )
+        answer = None
+        confidence = 0.0
         
-        # Aggregate answers
-        if community_answers:
-            answer, confidence = self._aggregate_answers(
+        # First try: Direct answer from retrieved entities (BEST for specific queries)
+        if nodes and context:
+            # Build entity-focused context
+            entity_context = self._build_entity_context(nodes, edges)
+            if entity_context:
+                answer, confidence = self._generate_direct_answer(
+                    query=query.query,
+                    context=entity_context,
+                )
+                if confidence >= 0.5:
+                    logger.debug(f"Using direct entity answer (confidence={confidence})")
+        
+        # Second try: Community answers (for broader queries)
+        if not answer or confidence < 0.5:
+            all_nodes = list(memory.nodes.values()) if memory.nodes else nodes
+            all_edges = list(memory.edges.values()) if memory.edges else edges
+            
+            community_answers = self._query_communities(
                 query=query.query,
-                answers=community_answers,
+                clusters=clusters,
+                nodes=all_nodes,
+                edges=all_edges,
             )
-        else:
-            # Direct answer from context
+            
+            if community_answers:
+                community_answer, community_confidence = self._aggregate_answers(
+                    query=query.query,
+                    answers=community_answers,
+                )
+                # Use community answer if better than direct
+                if community_confidence > confidence:
+                    answer = community_answer
+                    confidence = community_confidence
+        
+        # Fallback: General context answer
+        if not answer:
             answer, confidence = self._generate_direct_answer(
                 query=query.query,
                 context=context,
@@ -286,6 +308,61 @@ Synthesized Answer:"""
         except Exception as e:
             logger.error(f"Answer aggregation failed: {e}")
             return sorted_answers[0]["answer"], sorted_answers[0]["confidence"] / 10.0
+    
+    def _build_entity_context(
+        self,
+        nodes: List[MemoryNode],
+        edges: List[MemoryEdge],
+    ) -> str:
+        """
+        Build context DIRECTLY from retrieved entities.
+        
+        This is more precise than community summaries because it focuses
+        on the specific entities found by retrieval, avoiding noise.
+        """
+        if not nodes:
+            return ""
+        
+        context_parts = []
+        
+        # Entity details
+        context_parts.append("## ENTITIES (directly relevant to your query)")
+        for node in nodes[:20]:  # More entities
+            aliases = ""
+            if hasattr(node, 'aliases') and node.aliases:
+                other = [a for a in node.aliases if a != node.name]
+                if other:
+                    aliases = f" [Also known as: {', '.join(other[:5])}]"
+            
+            desc = node.description or "No description"
+            context_parts.append(f"• {node.name} ({node.entity_type}){aliases}")
+            context_parts.append(f"  Description: {desc[:300]}")
+        
+        # Relationships
+        if edges:
+            context_parts.append("\n## RELATIONSHIPS")
+            node_ids = {n.id for n in nodes}
+            node_names = {n.name.lower(): n.name for n in nodes}
+            
+            for edge in edges[:30]:  # More relationships
+                # Only include relationships involving our nodes
+                source_match = edge.source_id in node_ids or edge.source_id.lower() in node_names
+                target_match = edge.target_id in node_ids or edge.target_id.lower() in node_names
+                
+                if source_match or target_match:
+                    temporal = ""
+                    if hasattr(edge, 'valid_from') and edge.valid_from:
+                        from_str = edge.valid_from.strftime("%Y") if hasattr(edge.valid_from, 'strftime') else str(edge.valid_from)
+                        until_str = "present"
+                        if hasattr(edge, 'valid_until') and edge.valid_until:
+                            until_str = edge.valid_until.strftime("%Y") if hasattr(edge.valid_until, 'strftime') else str(edge.valid_until)
+                        temporal = f" [valid: {from_str} → {until_str}]"
+                    
+                    context_parts.append(f"• {edge.source_id} --[{edge.relation_type}]--> {edge.target_id}{temporal}")
+                    if edge.description:
+                        context_parts.append(f"  Detail: {edge.description[:200]}")
+        
+        return "\n".join(context_parts)
     
     def _generate_direct_answer(
         self,

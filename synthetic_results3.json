@@ -1,0 +1,32 @@
+{
+  "generated_at": "2025-12-05T07:16:02.101627",
+  "results": [
+    {
+      "challenge": "Entity Resolution Challenge",
+      "graphmem_correct": 1,
+      "naive_rag_correct": 1,
+      "total_queries": 4
+    },
+    {
+      "challenge": "Temporal Conflict Challenge",
+      "graphmem_correct": 1,
+      "naive_rag_correct": 0,
+      "total_queries": 3
+    },
+    {
+      "challenge": "6-Hop Relationship Chain Challenge",
+      "graphmem_correct": 0,
+      "naive_rag_correct": 1,
+      "total_queries": 3
+    },
+    {
+      "challenge": "Scale + Noise Challenge (200 docs)",
+      "graphmem_correct": 0,
+      "naive_rag_correct": 2,
+      "total_queries": 3
+    }
+  ],
+  "total_graphmem": 2,
+  "total_naive_rag": 4,
+  "total_queries": 13
+}

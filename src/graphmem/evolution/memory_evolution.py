@@ -76,6 +76,7 @@ class MemoryEvolution:
         # Initialize sub-components
         self.consolidation = MemoryConsolidation(
             embeddings=embeddings,
+            llm=llm,  # Pass LLM for smart entity consolidation
             similarity_threshold=consolidation_threshold,
         )
         

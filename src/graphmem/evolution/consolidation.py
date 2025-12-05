@@ -7,6 +7,7 @@ Like human memory consolidation during sleep.
 
 from __future__ import annotations
 import logging
+import re
 from datetime import datetime
 from typing import List, Dict, Any, Optional, Set, Tuple
 import numpy as np
@@ -24,12 +25,43 @@ from graphmem.core.memory_types import (
 logger = logging.getLogger(__name__)
 
 
+# LLM prompt for entity consolidation
+ENTITY_CONSOLIDATION_PROMPT = """You are an expert at identifying when different names refer to the SAME entity.
+
+## ENTITIES (same type: {entity_type})
+{entities_list}
+
+## TASK
+Group entities that refer to the SAME real-world entity. Consider:
+- "Dr. Chen", "Alexander Chen", "A. Chen", "Professor Chen" → SAME person
+- "The Quantum Pioneer" could be a nickname for someone
+- "Tesla, Inc.", "Tesla", "Tesla Motors" → SAME company
+- Different descriptions may still be the same entity
+
+## OUTPUT FORMAT
+Output groups of entity IDs that should be merged. Each line is one group.
+Format: ID1, ID2, ID3, ...
+
+Example:
+0, 2, 5
+1, 3
+4
+
+If entity is unique (no matches), list it alone:
+6
+
+List ALL entities, either grouped or alone.
+
+## GROUPS (one per line, entity IDs separated by commas):
+"""
+
+
 class MemoryConsolidation:
     """
     Consolidates similar memories into stronger, unified representations.
     
     Consolidation Types:
-    1. Entity Merging: Merge duplicate/similar entities
+    1. Entity Merging: Merge duplicate/similar entities (LLM-based)
     2. Edge Strengthening: Strengthen frequently co-occurring relationships
     3. Cluster Refinement: Improve community summaries
     4. Knowledge Synthesis: Create new memories from patterns
@@ -38,6 +70,7 @@ class MemoryConsolidation:
     def __init__(
         self,
         embeddings,
+        llm=None,  # NEW: LLM for smart consolidation
         similarity_threshold: float = 0.85,
         min_occurrences_to_merge: int = 2,
         synthesis_enabled: bool = True,
@@ -47,11 +80,13 @@ class MemoryConsolidation:
         
         Args:
             embeddings: Embedding provider
+            llm: LLM provider for smart entity matching
             similarity_threshold: Threshold for considering entities similar
             min_occurrences_to_merge: Minimum occurrences before merging
             synthesis_enabled: Whether to create synthesized memories
         """
         self.embeddings = embeddings
+        self.llm = llm  # NEW: LLM for entity consolidation
         self.similarity_threshold = similarity_threshold
         self.min_occurrences_to_merge = min_occurrences_to_merge
         self.synthesis_enabled = synthesis_enabled
@@ -91,7 +126,7 @@ class MemoryConsolidation:
         self,
         memory: Memory,
     ) -> List[EvolutionEvent]:
-        """Find and merge similar entities."""
+        """Find and merge similar entities using LLM-based matching."""
         events = []
         
         nodes = list(memory.nodes.values())
@@ -104,52 +139,38 @@ class MemoryConsolidation:
             key = node.entity_type.lower() if node.entity_type else "unknown"
             type_groups.setdefault(key, []).append(node)
         
-        # Find merge candidates within each type
-        merge_groups: List[Set[str]] = []
-        processed: Set[str] = set()
+        # Find merge candidates within each type using LLM
+        all_merge_groups: List[Set[str]] = []
         
         for entity_type, type_nodes in type_groups.items():
             if len(type_nodes) < 2:
                 continue
             
-            # Get embeddings for all nodes in this type
-            embeddings_map = {}
-            for node in type_nodes:
-                text = node.description or node.name
-                try:
-                    emb = self.embeddings.embed_text(text)
-                    if emb:
-                        embeddings_map[node.id] = np.array(emb)
-                except:
-                    pass
-            
-            # Find similar pairs
-            for i, node_a in enumerate(type_nodes):
-                if node_a.id in processed:
-                    continue
-                
-                similar_group = {node_a.id}
-                
-                for j in range(i + 1, len(type_nodes)):
-                    node_b = type_nodes[j]
-                    if node_b.id in processed:
-                        continue
-                    
-                    # Check similarity
-                    if self._are_similar(node_a, node_b, embeddings_map):
-                        similar_group.add(node_b.id)
-                
-                if len(similar_group) >= self.min_occurrences_to_merge:
-                    merge_groups.append(similar_group)
-                    processed.update(similar_group)
+            # Use LLM to identify duplicates (if available)
+            if self.llm and len(type_nodes) <= 50:  # Limit to avoid token overflow
+                merge_groups = self._llm_find_duplicates(type_nodes, entity_type)
+                all_merge_groups.extend(merge_groups)
+            else:
+                # Fallback to embedding-based matching for large sets
+                merge_groups = self._embedding_find_duplicates(type_nodes)
+                all_merge_groups.extend(merge_groups)
         
         # Perform merges
-        for group in merge_groups:
+        processed_nodes = set()
+        for group in all_merge_groups:
             if len(group) < 2:
                 continue
             
-            group_nodes = [memory.nodes[nid] for nid in group]
+            # Skip if any node already processed
+            if any(nid in processed_nodes for nid in group):
+                continue
+            
+            group_nodes = [memory.nodes[nid] for nid in group if nid in memory.nodes]
+            if len(group_nodes) < 2:
+                continue
+            
             merged_node, affected_edges = self._merge_nodes(group_nodes, memory)
+            processed_nodes.update(group)
             
             # Record event
             events.append(EvolutionEvent(
@@ -161,8 +182,102 @@ class MemoryConsolidation:
                 after_state={"merged_node": merged_node.id},
                 reason=f"Merged {len(group)} similar entities into '{merged_node.name}'",
             ))
+            
+            logger.info(f"🔗 Merged entities: {[n.name for n in group_nodes]} → '{merged_node.name}'")
         
         return events
+    
+    def _llm_find_duplicates(
+        self,
+        nodes: List[MemoryNode],
+        entity_type: str,
+    ) -> List[Set[str]]:
+        """Use LLM to find duplicate entities."""
+        if not self.llm:
+            return []
+        
+        # Build entity list for prompt
+        entities_list = []
+        node_id_map = {}  # Map index to node ID
+        for i, node in enumerate(nodes):
+            node_id_map[i] = node.id
+            aliases_str = ", ".join(node.aliases) if node.aliases else "none"
+            desc = (node.description or "")[:100]
+            entities_list.append(f"[{i}] {node.name} (aliases: {aliases_str}) - {desc}")
+        
+        prompt = ENTITY_CONSOLIDATION_PROMPT.format(
+            entity_type=entity_type,
+            entities_list="\n".join(entities_list),
+        )
+        
+        try:
+            response = self.llm.complete(prompt)
+            
+            # Parse response into groups
+            merge_groups = []
+            for line in response.strip().split("\n"):
+                line = line.strip()
+                if not line:
+                    continue
+                
+                # Parse comma-separated IDs
+                try:
+                    ids = [int(x.strip()) for x in line.split(",") if x.strip().isdigit()]
+                    if len(ids) >= 2:
+                        # Convert indices to node IDs
+                        group = {node_id_map[i] for i in ids if i in node_id_map}
+                        if len(group) >= 2:
+                            merge_groups.append(group)
+                            logger.debug(f"LLM group: {[nodes[i].name for i in ids if i < len(nodes)]}")
+                except (ValueError, KeyError) as e:
+                    continue
+            
+            logger.info(f"LLM found {len(merge_groups)} entity groups to merge in {entity_type}")
+            return merge_groups
+            
+        except Exception as e:
+            logger.warning(f"LLM consolidation failed: {e}, falling back to embeddings")
+            return self._embedding_find_duplicates(nodes)
+    
+    def _embedding_find_duplicates(
+        self,
+        nodes: List[MemoryNode],
+    ) -> List[Set[str]]:
+        """Fallback: Find duplicates using embeddings."""
+        merge_groups: List[Set[str]] = []
+        processed: Set[str] = set()
+        
+        # Get embeddings
+        embeddings_map = {}
+        for node in nodes:
+            text = node.description or node.name
+            try:
+                emb = self.embeddings.embed_text(text)
+                if emb:
+                    embeddings_map[node.id] = np.array(emb)
+            except:
+                pass
+        
+        # Find similar pairs
+        for i, node_a in enumerate(nodes):
+            if node_a.id in processed:
+                continue
+            
+            similar_group = {node_a.id}
+            
+            for j in range(i + 1, len(nodes)):
+                node_b = nodes[j]
+                if node_b.id in processed:
+                    continue
+                
+                if self._are_similar(node_a, node_b, embeddings_map):
+                    similar_group.add(node_b.id)
+            
+            if len(similar_group) >= 2:
+                merge_groups.append(similar_group)
+                processed.update(similar_group)
+        
+        return merge_groups
     
     def _are_similar(
         self,
@@ -205,15 +320,73 @@ class MemoryConsolidation:
         if name_a.lower() in name_b.lower() or name_b.lower() in name_a.lower():
             return True
         
-        # Check embedding similarity
+        # ===== NEW: AGGRESSIVE LAST NAME MATCHING =====
+        # For person entities: "Dr. Chen" and "Alexander Chen" share "Chen"
+        # This catches aliases where only the last name matches
+        if self._share_last_name(name_a, name_b):
+            # If they share last name AND have high description similarity, merge
+            emb_a = embeddings_map.get(node_a.id)
+            emb_b = embeddings_map.get(node_b.id)
+            if emb_a is not None and emb_b is not None:
+                sim = self._cosine_similarity(emb_a, emb_b)
+                if sim >= 0.65:  # Lower threshold when names partially match
+                    logger.debug(f"Last name match + embedding: '{name_a}' ≈ '{name_b}' (sim={sim:.2f})")
+                    return True
+        
+        # ===== NEW: TOKEN OVERLAP =====
+        # Check if significant name tokens overlap
+        tokens_a = set(re.findall(r'\b[a-z]{2,}\b', name_a.lower()))
+        tokens_b = set(re.findall(r'\b[a-z]{2,}\b', name_b.lower()))
+        # Remove common words
+        stopwords = {'the', 'dr', 'mr', 'ms', 'mrs', 'prof', 'professor', 'inc', 'corp', 'llc'}
+        tokens_a -= stopwords
+        tokens_b -= stopwords
+        
+        if tokens_a and tokens_b:
+            overlap = len(tokens_a & tokens_b)
+            min_tokens = min(len(tokens_a), len(tokens_b))
+            if min_tokens > 0 and overlap / min_tokens >= 0.5:  # 50% token overlap
+                # Check embedding to confirm
+                emb_a = embeddings_map.get(node_a.id)
+                emb_b = embeddings_map.get(node_b.id)
+                if emb_a is not None and emb_b is not None:
+                    sim = self._cosine_similarity(emb_a, emb_b)
+                    if sim >= 0.60:  # Even lower threshold when tokens match
+                        logger.debug(f"Token overlap + embedding: '{name_a}' ≈ '{name_b}' (sim={sim:.2f})")
+                        return True
+        
+        # Check embedding similarity (lower threshold for same entity type)
         emb_a = embeddings_map.get(node_a.id)
         emb_b = embeddings_map.get(node_b.id)
         
         if emb_a is not None and emb_b is not None:
             similarity = self._cosine_similarity(emb_a, emb_b)
-            if similarity >= self.similarity_threshold:
+            # Lower threshold: 0.75 instead of 0.85
+            if similarity >= 0.75:
+                logger.debug(f"Embedding match: '{name_a}' ≈ '{name_b}' (sim={similarity:.2f})")
                 return True
         
+        return False
+    
+    def _share_last_name(self, name_a: str, name_b: str) -> bool:
+        """Check if two names share a last name (for person entities)."""
+        # Extract potential last names (last word that's not a title)
+        def get_last_name(name: str) -> Optional[str]:
+            words = re.findall(r'\b[A-Za-z]{2,}\b', name)
+            if not words:
+                return None
+            # Skip common prefixes/suffixes
+            skip = {'dr', 'mr', 'ms', 'mrs', 'prof', 'professor', 'jr', 'sr', 'phd', 'md', 'the'}
+            for word in reversed(words):
+                if word.lower() not in skip:
+                    return word.lower()
+            return words[-1].lower() if words else None
+        
+        last_a = get_last_name(name_a)
+        last_b = get_last_name(name_b)
+        
+        if last_a and last_b and last_a == last_b and len(last_a) >= 3:
+            return True
         return False
     
     def _merge_nodes(

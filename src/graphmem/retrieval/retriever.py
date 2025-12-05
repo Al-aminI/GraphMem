@@ -86,6 +86,11 @@ class MemoryRetriever:
         """
         Retrieve relevant memories for a query.
         
+        Uses HYBRID retrieval:
+        1. EXACT NAME MATCH - Find entities mentioned by name in query
+        2. SEMANTIC SEARCH - Find semantically similar entities
+        3. GRAPH EXPANSION - Follow relationships from found entities
+        
         Args:
             query: Query specification
             memory: Memory to search
@@ -96,7 +101,12 @@ class MemoryRetriever:
         # Index memory for search
         self.semantic_search.index_nodes(list(memory.nodes.values()))
         
-        # Semantic search for relevant nodes
+        # ===== STEP 1: EXACT NAME MATCH =====
+        # Find entities that are EXPLICITLY mentioned in the query
+        # This prevents retrieving noise entities!
+        exact_matches = self._find_exact_name_matches(query.query, memory)
+        
+        # ===== STEP 2: SEMANTIC SEARCH =====
         node_results = self.semantic_search.search(
             query=query.query,
             top_k=query.top_k,
@@ -104,24 +114,43 @@ class MemoryRetriever:
             filters=query.filters,
         )
         
-        nodes = [node for node, _ in node_results]
-        scores = {node.id: score for node, score in node_results}
+        # Combine results: exact matches get HIGHEST priority
+        nodes = []
+        scores = {}
         
-        # Expand via graph traversal
+        # Add exact matches first with high score
+        for node in exact_matches:
+            if node.id not in scores:
+                nodes.append(node)
+                scores[node.id] = 1.0  # Perfect score for exact match
+                logger.debug(f"Exact match: '{node.name}' in query")
+        
+        # Add semantic search results
+        for node, score in node_results:
+            if node.id not in scores:
+                nodes.append(node)
+                scores[node.id] = score
+            else:
+                # Boost score if also found by semantic search
+                scores[node.id] = min(1.0, scores[node.id] + score * 0.2)
+        
+        # Expand via graph traversal - MORE HOPS for exact matches
+        edges = []
         if nodes:
+            # Use more hops if we have exact name matches (likely a specific query)
+            max_hops = 3 if exact_matches else 1
+            
             expanded_nodes, edges = self._expand_graph(
                 initial_nodes=nodes,
                 memory=memory,
-                max_hops=1,
+                max_hops=max_hops,
             )
             
-            # Add expanded nodes (with lower scores)
+            # Add expanded nodes (with lower scores based on hop distance)
             for node in expanded_nodes:
                 if node.id not in scores:
                     nodes.append(node)
-                    scores[node.id] = 0.3  # Lower score for expanded
-        else:
-            edges = []
+                    scores[node.id] = 0.4  # Lower score for expanded
         
         # Get relevant clusters
         clusters = []
@@ -141,27 +170,104 @@ class MemoryRetriever:
             "scores": scores,
         }
     
+    def _find_exact_name_matches(
+        self,
+        query: str,
+        memory: Memory,
+    ) -> List[MemoryNode]:
+        """
+        Find entities that are EXPLICITLY mentioned by name in the query.
+        
+        This is CRITICAL for avoiding noise:
+        - Query: "Who is the CEO of Helix Quantum Computing?"
+        - Should prioritize "Helix Quantum Computing" entity over other companies
+        
+        Matches against:
+        - Entity name
+        - Entity aliases
+        - Canonical name
+        """
+        import re
+        
+        query_lower = query.lower()
+        matches = []
+        matched_ids = set()
+        
+        for node in memory.nodes.values():
+            # Check entity name
+            if node.name.lower() in query_lower:
+                if node.id not in matched_ids:
+                    matches.append(node)
+                    matched_ids.add(node.id)
+                    continue
+            
+            # Check canonical name
+            if node.canonical_name and node.canonical_name.lower() in query_lower:
+                if node.id not in matched_ids:
+                    matches.append(node)
+                    matched_ids.add(node.id)
+                    continue
+            
+            # Check aliases
+            if hasattr(node, 'aliases') and node.aliases:
+                for alias in node.aliases:
+                    if len(alias) >= 3 and alias.lower() in query_lower:
+                        if node.id not in matched_ids:
+                            matches.append(node)
+                            matched_ids.add(node.id)
+                            break
+        
+        if matches:
+            logger.info(f"🎯 Exact name matches: {[n.name for n in matches]}")
+        
+        return matches
+    
     def _expand_graph(
         self,
         initial_nodes: List[MemoryNode],
         memory: Memory,
         max_hops: int = 1,
     ) -> Tuple[List[MemoryNode], List[MemoryEdge]]:
-        """Expand to related nodes via graph traversal."""
-        node_ids = {n.id for n in initial_nodes}
+        """
+        Expand to related nodes via graph traversal.
+        
+        Supports multi-hop expansion for chain queries:
+        A → B → C → D (3 hops)
+        """
+        all_node_ids = {n.id for n in initial_nodes}
+        current_frontier = set(all_node_ids)
         expanded_nodes = []
         related_edges = []
+        collected_edge_ids = set()
         
-        for edge in memory.edges.values():
-            if edge.source_id in node_ids or edge.target_id in node_ids:
-                related_edges.append(edge)
-                
-                # Add connected nodes
-                for connected_id in [edge.source_id, edge.target_id]:
-                    if connected_id not in node_ids:
-                        if connected_id in memory.nodes:
-                            expanded_nodes.append(memory.nodes[connected_id])
-                            node_ids.add(connected_id)
+        for hop in range(max_hops):
+            next_frontier = set()
+            
+            for edge in memory.edges.values():
+                # Skip already collected edges
+                if edge.id in collected_edge_ids:
+                    continue
+                    
+                # Check if edge connects to current frontier
+                if edge.source_id in current_frontier or edge.target_id in current_frontier:
+                    related_edges.append(edge)
+                    collected_edge_ids.add(edge.id)
+                    
+                    # Add connected nodes to next frontier
+                    for connected_id in [edge.source_id, edge.target_id]:
+                        if connected_id not in all_node_ids:
+                            if connected_id in memory.nodes:
+                                expanded_nodes.append(memory.nodes[connected_id])
+                                all_node_ids.add(connected_id)
+                                next_frontier.add(connected_id)
+            
+            # Move to next hop
+            current_frontier = next_frontier
+            if not current_frontier:
+                break  # No more nodes to expand
+        
+        if expanded_nodes:
+            logger.debug(f"Graph expansion: {len(expanded_nodes)} nodes in {max_hops} hops")
         
         return expanded_nodes, related_edges
     
