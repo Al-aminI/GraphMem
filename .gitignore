@@ -85,3 +85,6 @@ eval_graphmem.db_cache.db
 eval_graphmem.db
 *.db
 evaluation/results/
+*.db
+synthetic_results*.json
+final_results.json
