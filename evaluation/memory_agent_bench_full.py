@@ -170,7 +170,30 @@ def calculate_metrics(prediction: str, ground_truths: Any) -> Dict[str, float]:
 # =============================================================================
 
 class GraphMemAgent:
-    """GraphMem agent wrapper for benchmarking."""
+    """GraphMem agent wrapper for benchmarking.
+    
+    Evolution Features Utilized:
+    
+    1. PAGERANK CENTRALITY
+       - Identifies hub entities (highly connected)
+       - Boosts importance of well-connected nodes
+       - Used in retrieval ranking
+    
+    2. MEMORY DECAY
+       - Priority-based: Higher fact # = newer = survives
+       - LLM-based: Detects semantic conflicts
+       - Filters EPHEMERAL edges during retrieval
+    
+    3. CONSOLIDATION  
+       - LLM-based entity merging
+       - Alias unification
+       - Reduces graph noise
+    
+    4. TEMPORAL VALIDITY
+       - valid_from / valid_until on edges
+       - Point-in-time queries
+       - Supersession detection
+    """
     
     def __init__(
         self,
@@ -195,6 +218,12 @@ class GraphMemAgent:
         self.turso_db_path = turso_db_path
         self.gm = None
         self.memory_construction_time = 0
+        self.evolution_stats = {
+            "consolidations": 0,
+            "decays": 0,
+            "pagerank_updates": 0,
+            "temporal_conflicts": 0,
+        }
         
     def initialize(self, fresh: bool = True):
         """Initialize GraphMem instance."""
@@ -236,7 +265,14 @@ class GraphMemAgent:
         self.memory_construction_time += time.time() - start
         
     def memorize_batch(self, chunks: List[str], evolve_after: bool = True):
-        """Batch memorize with optional evolution."""
+        """Batch memorize with evolution to leverage all GraphMem features.
+        
+        EVOLUTION BENEFITS:
+        1. PageRank: Updates importance scores based on graph structure
+        2. Decay: Marks superseded/conflicting edges as EPHEMERAL
+        3. Consolidation: Merges similar entities (LLM-based)
+        4. Temporal: Updates valid_from/valid_until based on conflicts
+        """
         if self.gm is None:
             self.initialize()
         
@@ -259,10 +295,29 @@ class GraphMemAgent:
                 except Exception as e2:
                     logger.warning(f"Single ingestion failed: {e2}")
         
-        # Evolve memory if requested
+        # CRITICAL: Evolve memory to benefit from all features
         if evolve_after and len(chunks) > 1:
             try:
-                self.gm.evolve()
+                evolution_result = self.gm.evolve()
+                events = evolution_result.events if hasattr(evolution_result, 'events') else evolution_result
+                
+                # Track evolution statistics
+                for event in events:
+                    event_type = str(event.evolution_type).lower()
+                    if 'consolidat' in event_type:
+                        self.evolution_stats["consolidations"] += 1
+                    elif 'decay' in event_type:
+                        self.evolution_stats["decays"] += 1
+                        if 'temporal' in str(event.reason).lower():
+                            self.evolution_stats["temporal_conflicts"] += 1
+                    elif 'reinforce' in event_type:
+                        self.evolution_stats["pagerank_updates"] += 1
+                
+                if events:
+                    logger.debug(f"📊 Evolution: {len(events)} events "
+                               f"({self.evolution_stats['consolidations']} consolidations, "
+                               f"{self.evolution_stats['decays']} decays)")
+                               
             except Exception as e:
                 logger.debug(f"Evolution failed: {e}")
         
@@ -293,6 +348,45 @@ class GraphMemAgent:
             "relationships": len(self.gm._memory.edges),
             "clusters": len(self.gm._memory.clusters) if hasattr(self.gm._memory, 'clusters') else 0,
         }
+    
+    def get_evolution_impact(self) -> Dict[str, Any]:
+        """Get detailed evolution impact statistics.
+        
+        Shows how much the evolution features are actually helping.
+        """
+        if self.gm is None:
+            return {}
+        
+        # Count edges by state
+        active_edges = 0
+        decayed_edges = 0
+        temporal_edges = 0
+        
+        for edge in self.gm._memory.edges.values():
+            if edge.importance.name == "EPHEMERAL" or edge.state.name != "ACTIVE":
+                decayed_edges += 1
+            else:
+                active_edges += 1
+            
+            if edge.valid_from or edge.valid_until:
+                temporal_edges += 1
+        
+        # Count nodes by importance
+        importance_dist = {}
+        for node in self.gm._memory.nodes.values():
+            imp_name = node.importance.name
+            importance_dist[imp_name] = importance_dist.get(imp_name, 0) + 1
+        
+        return {
+            "total_entities": len(self.gm._memory.nodes),
+            "total_relationships": len(self.gm._memory.edges),
+            "active_edges": active_edges,
+            "decayed_edges": decayed_edges,
+            "temporal_edges": temporal_edges,
+            "decay_rate": decayed_edges / max(1, len(self.gm._memory.edges)),
+            "importance_distribution": importance_dist,
+            "evolution_events": self.evolution_stats,
+        }
 
 
 # =============================================================================
@@ -319,13 +413,13 @@ def load_dataset_from_hf(dataset_name: str = "ai-hyz/MemoryAgentBench"):
 
 def chunk_text(text: str, chunk_size: int = 512, model: str = "gpt-4o-mini") -> List[str]:
     """Split text into chunks of specified token size."""
-    try:
-        import tiktoken
-        encoding = tiktoken.encoding_for_model(model)
-    except:
-        # Fallback to simple character-based chunking
-        char_size = chunk_size * 4  # Rough approximation
-        return [text[i:i+char_size] for i in range(0, len(text), char_size)]
+    # try:
+    import tiktoken
+    encoding = tiktoken.encoding_for_model(model)
+    # except:
+    #     # Fallback to simple character-based chunking
+    #     char_size = chunk_size * 4  # Rough approximation
+    #     return [text[i:i+char_size] for i in range(0, len(text), char_size)]
     
     tokens = encoding.encode(text)
     chunks = []
@@ -746,8 +840,23 @@ class SelectiveForgettingEvaluator:
         self.result = CompetencyResult("SF")
     
     def evaluate_fc_sh(self, dataset) -> List[TaskResult]:
-        """FactConsolidation Single-Hop evaluation."""
+        """FactConsolidation Single-Hop evaluation.
+        
+        THIS IS WHERE GRAPHMEM'S EVOLUTION FEATURES SHINE!
+        
+        Evolution features utilized:
+        1. PRIORITY-BASED DECAY: Facts later in document have higher priority
+           - Fact 40: "Christianity founded in Jerusalem" (priority=40)
+           - Fact 43: "Christianity founded in Taipei" (priority=43) ← WINS
+        
+        2. LLM-BASED CONFLICT DETECTION: Identifies same source+relation with different targets
+        
+        3. IMPORTANCE FILTERING: EPHEMERAL edges filtered during retrieval
+        
+        4. TEMPORAL SUPERSESSION: Later facts supersede earlier ones
+        """
         logger.info("📊 Evaluating FC-SH (FactConsolidation Single-Hop)...")
+        logger.info("   🔄 Using phased ingestion with evolution between phases")
         results = []
         
         if "Conflict_Resolution" not in dataset:
@@ -762,25 +871,42 @@ class SelectiveForgettingEvaluator:
             questions = sample.get("questions", [])
             answers = sample.get("answers", [])
             
-            # For conflict resolution, we ingest in phases to simulate updates
+            # PHASED INGESTION - Critical for conflict resolution!
+            # Facts are numbered (e.g., "43. Christianity was founded in Taipei")
+            # Higher numbers = newer information = should override
             total_len = len(context)
             
-            # Phase 1: Initial facts (40%)
+            # Phase 1: Initial facts (40%) - OLD information
+            logger.debug(f"   Phase 1: Ingesting initial facts (0-40%)")
             initial = context[:int(total_len * 0.4)]
             chunks_initial = chunk_text(initial, chunk_size=512)
-            self.agent.memorize_batch(chunks_initial, evolve_after=False)
+            self.agent.memorize_batch(chunks_initial, evolve_after=False)  # No evolution yet
             
-            # Phase 2: Updates (30%)
+            stats_p1 = self.agent.get_stats()
+            logger.debug(f"      After P1: {stats_p1['entities']} entities, {stats_p1['relationships']} relationships")
+            
+            # Phase 2: Updates (30%) - May contain conflicting info
+            logger.debug(f"   Phase 2: Ingesting updates (40-70%) + EVOLUTION")
             middle = context[int(total_len * 0.4):int(total_len * 0.7)]
             chunks_middle = chunk_text(middle, chunk_size=512)
-            self.agent.memorize_batch(chunks_middle, evolve_after=True)
+            self.agent.memorize_batch(chunks_middle, evolve_after=True)  # EVOLVE to detect conflicts
             
-            # Phase 3: Final facts (30%)
+            stats_p2 = self.agent.get_stats()
+            logger.debug(f"      After P2: {stats_p2['entities']} entities, {stats_p2['relationships']} relationships")
+            logger.debug(f"      Evolution: {self.agent.evolution_stats['decays']} decays so far")
+            
+            # Phase 3: Final facts (30%) - NEWEST information (should win)
+            logger.debug(f"   Phase 3: Ingesting final facts (70-100%) + FINAL EVOLUTION")
             final = context[int(total_len * 0.7):]
             chunks_final = chunk_text(final, chunk_size=512)
-            self.agent.memorize_batch(chunks_final, evolve_after=True)
+            self.agent.memorize_batch(chunks_final, evolve_after=True)  # FINAL evolution
             
-            # Evaluate - system should return UPDATED facts
+            stats_p3 = self.agent.get_stats()
+            logger.info(f"   Sample {idx+1} complete: {stats_p3['entities']} entities, "
+                       f"{stats_p3['relationships']} relationships, "
+                       f"{self.agent.evolution_stats['decays']} total decays")
+            
+            # Evaluate - system should return UPDATED facts (not old ones!)
             for q_idx, (question, expected) in enumerate(zip(questions[:10], answers[:10])):
                 predicted, latency = self.agent.query(question)
                 metrics = calculate_metrics(predicted, expected)
@@ -792,6 +918,10 @@ class SelectiveForgettingEvaluator:
                     latency_ms=latency,
                     **metrics
                 ))
+                
+                # Log conflicts detected
+                if metrics["substring_match"] < 1.0:
+                    logger.debug(f"      ❌ Q{q_idx+1}: Expected '{expected}', got '{predicted[:50]}...'")
             
             if idx >= 3:
                 break
@@ -852,6 +982,17 @@ class SelectiveForgettingEvaluator:
         self.evaluate_fc_sh(dataset)
         self.evaluate_fc_mh(dataset)
         return self.result
+
+
+# =============================================================================
+# HELPER FUNCTIONS
+# =============================================================================
+
+def _format_importance_dist(dist: Dict[str, int]) -> str:
+    """Format importance distribution for display."""
+    if not dist:
+        return "No data"
+    return " | ".join(f"{k}: {v}" for k, v in sorted(dist.items()))
 
 
 # =============================================================================
@@ -958,6 +1099,9 @@ def run_full_benchmark(
     
     result.total_time = time.time() - start_time
     
+    # Get evolution impact
+    evolution_impact = agent.get_evolution_impact()
+    
     # Print summary
     print("\n" + "="*80)
     print("📊 FINAL RESULTS SUMMARY")
@@ -980,6 +1124,32 @@ def run_full_benchmark(
 ├──────────────────┼────────────────────────────────────────────────────┤
 │ OVERALL          │ {result.overall_score():.1f}%
 └──────────────────┴────────────────────────────────────────────────────┘
+""")
+    
+    # Print evolution impact
+    print("="*80)
+    print("🔄 EVOLUTION IMPACT (GraphMem's Unique Features)")
+    print("="*80)
+    print(f"""
+┌─────────────────────────────────────────────────────────────────────────┐
+│ MEMORY DECAY (Priority-based conflict resolution)                        │
+│   - Total relationships: {evolution_impact.get('total_relationships', 0)}
+│   - Active edges: {evolution_impact.get('active_edges', 0)}
+│   - Decayed edges (superseded): {evolution_impact.get('decayed_edges', 0)}
+│   - Decay rate: {evolution_impact.get('decay_rate', 0)*100:.1f}%
+├─────────────────────────────────────────────────────────────────────────┤
+│ TEMPORAL VALIDITY                                                        │
+│   - Edges with temporal bounds: {evolution_impact.get('temporal_edges', 0)}
+├─────────────────────────────────────────────────────────────────────────┤
+│ EVOLUTION EVENTS                                                         │
+│   - Consolidations (entity merges): {evolution_impact.get('evolution_events', {}).get('consolidations', 0)}
+│   - Decays (conflict resolution): {evolution_impact.get('evolution_events', {}).get('decays', 0)}
+│   - PageRank updates: {evolution_impact.get('evolution_events', {}).get('pagerank_updates', 0)}
+│   - Temporal conflicts detected: {evolution_impact.get('evolution_events', {}).get('temporal_conflicts', 0)}
+├─────────────────────────────────────────────────────────────────────────┤
+│ IMPORTANCE DISTRIBUTION (PageRank effect)                                │
+│   {_format_importance_dist(evolution_impact.get('importance_distribution', {}))}
+└─────────────────────────────────────────────────────────────────────────┘
     
 Total Time: {result.total_time:.1f}s
 """)
