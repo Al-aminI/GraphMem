@@ -1,0 +1,218 @@
+# Configuration
+
+GraphMem is configured using the `MemoryConfig` class.
+
+## Basic Configuration
+
+```python
+from graphmem import MemoryConfig
+
+config = MemoryConfig(
+    # Required: LLM provider
+    llm_provider="openai",
+    llm_api_key="sk-...",
+    llm_model="gpt-4o-mini",
+    
+    # Required: Embedding provider
+    embedding_provider="openai",
+    embedding_api_key="sk-...",
+    embedding_model="text-embedding-3-small",
+)
+```
+
+## LLM Configuration
+
+### OpenAI
+
+```python
+config = MemoryConfig(
+    llm_provider="openai",
+    llm_api_key="sk-...",
+    llm_model="gpt-4o-mini",  # or gpt-4o, gpt-4-turbo
+)
+```
+
+### Azure OpenAI
+
+```python
+config = MemoryConfig(
+    llm_provider="azure",
+    llm_api_key="your-azure-key",
+    azure_endpoint="https://your-resource.openai.azure.com/",
+    azure_deployment="gpt-4",
+    llm_model="gpt-4",
+    azure_api_version="2024-02-15-preview",  # Optional
+)
+```
+
+### OpenAI-Compatible (OpenRouter, Together, etc.)
+
+```python
+config = MemoryConfig(
+    llm_provider="openai_compatible",
+    llm_api_key="your-key",
+    llm_api_base="https://openrouter.ai/api/v1",
+    llm_model="google/gemini-2.0-flash-001",
+)
+```
+
+### Anthropic
+
+```python
+config = MemoryConfig(
+    llm_provider="anthropic",
+    llm_api_key="sk-ant-...",
+    llm_model="claude-3-5-sonnet-20241022",
+)
+```
+
+## Embedding Configuration
+
+### OpenAI Embeddings
+
+```python
+config = MemoryConfig(
+    embedding_provider="openai",
+    embedding_api_key="sk-...",
+    embedding_model="text-embedding-3-small",  # or text-embedding-3-large
+)
+```
+
+### Azure OpenAI Embeddings
+
+```python
+config = MemoryConfig(
+    embedding_provider="azure",
+    embedding_api_key="your-azure-key",
+    azure_embedding_deployment="text-embedding-ada-002",
+    embedding_model="text-embedding-ada-002",
+)
+```
+
+## Storage Configuration
+
+### In-Memory (Default)
+
+```python
+config = MemoryConfig(
+    # No storage config needed - uses in-memory by default
+)
+```
+
+### Turso (SQLite Persistence)
+
+```python
+config = MemoryConfig(
+    # Local file (recommended for most users)
+    turso_db_path="my_memory.db",
+    
+    # Optional: Cloud sync
+    # turso_url="https://your-db.turso.io",
+    # turso_auth_token="your-token",
+)
+```
+
+### Neo4j
+
+```python
+config = MemoryConfig(
+    neo4j_uri="neo4j+s://xxx.databases.neo4j.io",
+    neo4j_username="neo4j",
+    neo4j_password="your-password",
+)
+```
+
+### Redis Cache
+
+```python
+config = MemoryConfig(
+    redis_url="redis://default:password@host:port",
+)
+```
+
+## Evolution Configuration
+
+```python
+config = MemoryConfig(
+    # Enable memory evolution
+    evolution_enabled=True,
+    
+    # Auto-evolve after each ingestion
+    auto_evolve=True,
+    
+    # Memory decay settings
+    decay_enabled=True,
+    decay_half_life_days=30,  # How fast memories fade
+    
+    # Consolidation threshold (0.0 - 1.0)
+    consolidation_threshold=0.85,  # Higher = less aggressive merging
+)
+```
+
+## Multi-Tenant Configuration
+
+```python
+from graphmem import GraphMem
+
+# User-specific memory
+memory = GraphMem(
+    config,
+    user_id="alice",      # Isolate by user
+    memory_id="chat_1",   # Isolate by session/context
+)
+```
+
+## All Configuration Options
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `llm_provider` | str | Required | LLM provider name |
+| `llm_api_key` | str | Required | API key for LLM |
+| `llm_model` | str | Required | Model name |
+| `llm_api_base` | str | None | Custom API base URL |
+| `embedding_provider` | str | Required | Embedding provider |
+| `embedding_api_key` | str | Required | API key for embeddings |
+| `embedding_model` | str | Required | Embedding model name |
+| `azure_endpoint` | str | None | Azure OpenAI endpoint |
+| `azure_deployment` | str | None | Azure LLM deployment |
+| `azure_embedding_deployment` | str | None | Azure embedding deployment |
+| `azure_api_version` | str | "2024-02-15-preview" | Azure API version |
+| `turso_db_path` | str | None | Local SQLite path |
+| `turso_url` | str | None | Turso cloud URL |
+| `turso_auth_token` | str | None | Turso auth token |
+| `neo4j_uri` | str | None | Neo4j connection URI |
+| `neo4j_username` | str | None | Neo4j username |
+| `neo4j_password` | str | None | Neo4j password |
+| `redis_url` | str | None | Redis connection URL |
+| `evolution_enabled` | bool | True | Enable evolution |
+| `auto_evolve` | bool | False | Auto-evolve on ingest |
+| `decay_enabled` | bool | True | Enable memory decay |
+| `decay_half_life_days` | int | 30 | Decay half-life |
+| `consolidation_threshold` | float | 0.85 | Merge threshold |
+
+## Environment Variables
+
+You can also use environment variables:
+
+```bash
+export OPENAI_API_KEY="sk-..."
+export NEO4J_URI="neo4j+s://..."
+export NEO4J_PASSWORD="..."
+export REDIS_URL="redis://..."
+```
+
+```python
+import os
+
+config = MemoryConfig(
+    llm_provider="openai",
+    llm_api_key=os.getenv("OPENAI_API_KEY"),
+    llm_model="gpt-4o-mini",
+    embedding_provider="openai",
+    embedding_api_key=os.getenv("OPENAI_API_KEY"),
+    embedding_model="text-embedding-3-small",
+    neo4j_uri=os.getenv("NEO4J_URI"),
+    neo4j_password=os.getenv("NEO4J_PASSWORD"),
+)
+```
+

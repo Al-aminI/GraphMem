@@ -1,0 +1,211 @@
+# MkDocs Configuration for GraphMem Documentation
+# https://www.mkdocs.org/
+
+site_name: GraphMem
+site_description: "The Human Brain for AI Agents - Memory that thinks, forgets, and evolves"
+site_author: Al-Amin Ibrahim
+site_url: https://graphmem.readthedocs.io/
+
+repo_name: Al-aminI/GraphMem
+repo_url: https://github.com/Al-aminI/GraphMem
+edit_uri: edit/main/docs/
+
+# Copyright
+copyright: Copyright &copy; 2024 Al-Amin Ibrahim
+
+# Theme Configuration
+theme:
+  name: material
+  language: en
+  
+  # Color palette
+  palette:
+    # Light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: deep purple
+      accent: purple
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    
+    # Dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: deep purple
+      accent: purple
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  
+  # Font
+  font:
+    text: Inter
+    code: JetBrains Mono
+  
+  # Features
+  features:
+    - navigation.instant
+    - navigation.instant.prefetch
+    - navigation.tracking
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.expand
+    - navigation.path
+    - navigation.top
+    - navigation.footer
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - search.share
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+    - content.tooltips
+  
+  # Logo and icons
+  icon:
+    repo: fontawesome/brands/github
+    logo: material/brain
+  
+  # Favicon
+  favicon: assets/favicon.png
+
+# Plugins
+plugins:
+  - search:
+      separator: '[\s\-,:!=\[\]()"`/]+|\.(?!\d)|&[lg]t;|(?!\b)(?=[A-Z][a-z])'
+  - minify:
+      minify_html: true
+
+# Markdown Extensions
+markdown_extensions:
+  # Python Markdown
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - toc:
+      permalink: true
+      toc_depth: 3
+  
+  # Python Markdown Extensions
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.betterem:
+      smart_enable: all
+  - pymdownx.caret
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.magiclink:
+      normalize_issue_symbols: true
+      repo_url_shorthand: true
+      user: Al-aminI
+      repo: GraphMem
+  - pymdownx.mark
+  - pymdownx.smartsymbols
+  - pymdownx.snippets:
+      auto_append:
+        - includes/abbreviations.md
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+      combine_header_slug: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.tilde
+
+# Extra CSS
+extra_css:
+  - stylesheets/extra.css
+
+# Extra JavaScript
+extra_javascript:
+  - javascripts/mathjax.js
+  - https://polyfill.io/v3/polyfill.min.js?features=es6
+  - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
+
+# Social links
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/Al-aminI/GraphMem
+    - icon: fontawesome/brands/python
+      link: https://pypi.org/project/agentic-graph-mem/
+  
+  # Analytics (optional - add your own)
+  # analytics:
+  #   provider: google
+  #   property: G-XXXXXXXXXX
+  
+  # Version provider
+  version:
+    provider: mike
+  
+  # Generator notice
+  generator: false
+
+# Navigation
+nav:
+  - Home: index.md
+  
+  - Getting Started:
+    - Installation: getting-started/installation.md
+    - Quick Start: getting-started/quickstart.md
+    - Configuration: getting-started/configuration.md
+    - Storage Backends: getting-started/storage.md
+  
+  - Core Concepts:
+    - Overview: concepts/overview.md
+    - Knowledge Graph: concepts/knowledge-graph.md
+    - Memory Evolution: concepts/evolution.md
+    - Temporal Validity: concepts/temporal.md
+    - Multi-Tenancy: concepts/multi-tenancy.md
+  
+  - Building Agents:
+    - Agent Guide: agents/guide.md
+    - Conversational Agents: agents/conversational.md
+    - Research Agents: agents/research.md
+    - Enterprise Agents: agents/enterprise.md
+    - Best Practices: agents/best-practices.md
+  
+  - Production:
+    - Architecture: production/architecture.md
+    - Distributed Infrastructure: production/distributed.md
+    - Deployment: production/deployment.md
+    - Monitoring: production/monitoring.md
+    - Cost Optimization: production/cost.md
+  
+  - API Reference:
+    - GraphMem: api/graphmem.md
+    - MemoryConfig: api/config.md
+    - MemoryNode: api/node.md
+    - MemoryEdge: api/edge.md
+    - Stores: api/stores.md
+  
+  - Examples:
+    - Basic Usage: examples/basic.md
+    - Multi-Tenant Chat: examples/chat.md
+    - Knowledge Base: examples/kb.md
+    - Temporal Queries: examples/temporal.md
+  
+  - Contributing:
+    - Development Setup: contributing/setup.md
+    - Guidelines: contributing/guidelines.md
+    - Changelog: contributing/changelog.md
+

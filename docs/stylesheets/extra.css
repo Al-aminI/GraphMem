@@ -1,0 +1,112 @@
+/* GraphMem Documentation Styles */
+
+/* Custom font for code */
+:root {
+  --md-code-font: "JetBrains Mono", monospace;
+}
+
+/* Hero styling */
+.md-typeset h1 {
+  font-weight: 700;
+}
+
+/* Feature grid cards */
+.grid.cards > ul > li {
+  border-radius: 0.5rem;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.grid.cards > ul > li:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+}
+
+/* Code block styling */
+.md-typeset pre {
+  border-radius: 0.5rem;
+}
+
+.md-typeset pre > code {
+  font-size: 0.85em;
+}
+
+/* Table styling */
+.md-typeset table:not([class]) {
+  font-size: 0.85em;
+}
+
+.md-typeset table:not([class]) th {
+  font-weight: 600;
+  background-color: var(--md-primary-fg-color);
+  color: var(--md-primary-bg-color);
+}
+
+/* Admonition styling */
+.md-typeset .admonition {
+  border-radius: 0.5rem;
+}
+
+/* Navigation */
+.md-nav__link--active {
+  font-weight: 600;
+}
+
+/* Footer */
+.md-footer {
+  background-color: var(--md-primary-fg-color);
+}
+
+/* Custom classes */
+.center {
+  text-align: center;
+}
+
+.large-icon {
+  font-size: 2rem;
+}
+
+/* Architecture diagrams */
+pre.highlight {
+  background-color: #1a1a2e;
+  color: #e0e0e0;
+  padding: 1rem;
+  border-radius: 0.5rem;
+  overflow-x: auto;
+}
+
+/* Badges */
+.md-typeset img[alt="PyPI"],
+.md-typeset img[alt="Python 3.9+"],
+.md-typeset img[alt="License: MIT"],
+.md-typeset img[alt="GitHub"] {
+  display: inline-block;
+  margin: 0.2rem;
+}
+
+/* Hero section styling */
+.md-content__inner > h1:first-child {
+  margin-bottom: 0.5rem;
+}
+
+.md-content__inner > h1:first-child + h2 {
+  margin-top: 0;
+  font-weight: 400;
+  color: var(--md-default-fg-color--light);
+}
+
+/* Tab styling */
+.md-typeset .tabbed-set {
+  border-radius: 0.5rem;
+  overflow: hidden;
+}
+
+/* Button styling for links */
+.md-typeset a.md-button {
+  border-radius: 0.5rem;
+  transition: all 0.2s;
+}
+
+.md-typeset a.md-button:hover {
+  transform: translateY(-2px);
+}
+
