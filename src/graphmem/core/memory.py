@@ -575,13 +575,18 @@ class GraphMem:
             if progress_callback:
                 progress_callback("parsing", 0.1)
             
-            # Build knowledge graph from content
+            # Get existing nodes for coreference resolution (cross-document entity linking)
+            existing_nodes = list(self._memory.nodes.values()) if self._memory.nodes else []
+            
+            # Build knowledge graph from content with coreference resolution
             nodes, edges = self._knowledge_graph.extract(
                 content=content,
                 metadata=metadata or {},
                 memory_id=self.memory_id,
                 user_id=self.user_id,  # Multi-tenant isolation
                 progress_callback=progress_callback,
+                existing_nodes=existing_nodes,  # NEW: For coreference resolution
+                enable_coreference=len(existing_nodes) > 0,  # Only if we have existing entities
             )
             
             if progress_callback:
@@ -593,51 +598,51 @@ class GraphMem:
                 # This avoids "dictionary changed size during iteration" errors
                 existing_node_ids = set(self._memory.nodes.keys())
                 existing_edge_ids = set(self._memory.edges.keys())
-                
-                # Add to memory
-                for node in nodes:
-                    node.importance = importance
-                    self._memory.add_node(node)
-                
-                for edge in edges:
-                    edge.importance = importance
-                    self._memory.add_edge(edge)
-                
-                if progress_callback:
-                    progress_callback("building_communities", 0.8)
-                
+            
+            # Add to memory
+            for node in nodes:
+                node.importance = importance
+                self._memory.add_node(node)
+            
+            for edge in edges:
+                edge.importance = importance
+                self._memory.add_edge(edge)
+            
+            if progress_callback:
+                progress_callback("building_communities", 0.8)
+            
                 # Create safe copies for community detection
                 # Use dict.copy() + values() which is safer than list(values())
                 nodes_snapshot = list(self._memory.nodes.copy().values())
                 edges_snapshot = list(self._memory.edges.copy().values())
                 
                 # Rebuild communities with snapshot copies
-                clusters = self._community_detector.detect(
+            clusters = self._community_detector.detect(
                     nodes=nodes_snapshot,
                     edges=edges_snapshot,
-                    memory_id=self.memory_id,
-                )
-                
-                for cluster in clusters:
-                    self._memory.add_cluster(cluster)
-                
-                if progress_callback:
-                    progress_callback("persisting", 0.9)
-                
-                # Persist to storage
-                self._graph_store.save_memory(self._memory)
-                
+                memory_id=self.memory_id,
+            )
+            
+            for cluster in clusters:
+                self._memory.add_cluster(cluster)
+            
+            if progress_callback:
+                progress_callback("persisting", 0.9)
+            
+            # Persist to storage
+            self._graph_store.save_memory(self._memory)
+            
                 # Invalidate cache (multi-tenant safe)
-                if self._cache:
+            if self._cache:
                     self._cache.invalidate(self.memory_id, user_id=self.user_id)
-                
-                elapsed = time.time() - start_time
-                
-                # Update metrics
-                self._metrics["ingestions"] += 1
-                self._metrics["total_nodes"] = len(self._memory.nodes)
-                self._metrics["total_edges"] = len(self._memory.edges)
-                self._metrics["total_clusters"] = len(self._memory.clusters)
+            
+            elapsed = time.time() - start_time
+            
+            # Update metrics
+            self._metrics["ingestions"] += 1
+            self._metrics["total_nodes"] = len(self._memory.nodes)
+            self._metrics["total_edges"] = len(self._memory.edges)
+            self._metrics["total_clusters"] = len(self._memory.clusters)
             
             if progress_callback:
                 progress_callback("complete", 1.0)
@@ -757,12 +762,17 @@ class GraphMem:
             
             while True:
                 try:
+                    # Get snapshot of existing nodes for coreference (thread-safe read)
+                    existing_nodes = list(self._memory.nodes.values()) if self._memory.nodes else []
+                    
                     nodes, edges = self._knowledge_graph.extract(
                         content=content,
                         metadata=metadata,
                         memory_id=self.memory_id,
                         user_id=self.user_id,
                         progress_callback=None,
+                        existing_nodes=existing_nodes,  # For coreference resolution
+                        enable_coreference=len(existing_nodes) > 0,
                     )
                     
                     with results_lock:
@@ -1021,12 +1031,12 @@ class GraphMem:
                 for node in response.nodes:
                     if node.id in self._memory.nodes:
                         self._memory.nodes[node.id] = node.record_access()
-            
-            # Update metrics
-            response.latency_ms = (time.time() - start_time) * 1000
-            self._metrics["queries"] += 1
-            
-            logger.info(f"Query completed: '{query[:50]}...' -> {len(response.nodes)} nodes")
+                
+                # Update metrics
+                response.latency_ms = (time.time() - start_time) * 1000
+                self._metrics["queries"] += 1
+                
+                logger.info(f"Query completed: '{query[:50]}...' -> {len(response.nodes)} nodes")
             
             return response
             
@@ -1091,13 +1101,13 @@ class GraphMem:
                     
                     if self._cache:
                         self._cache.invalidate(self.memory_id, user_id=self.user_id)
-            
-            self._evolution_history.extend(events)
-            self._metrics["evolutions"] += len(events)
-            
-            logger.info(f"Evolution completed: {len(events)} events")
-            
-            return events
+                
+                self._evolution_history.extend(events)
+                self._metrics["evolutions"] += len(events)
+                
+                logger.info(f"Evolution completed: {len(events)} events")
+                
+                return events
             
         except Exception as e:
             logger.error(f"Evolution failed: {e}")

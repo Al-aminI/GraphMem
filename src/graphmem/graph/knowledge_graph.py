@@ -18,53 +18,95 @@ from graphmem.core.exceptions import ExtractionError
 logger = logging.getLogger(__name__)
 
 
-# State-of-the-art extraction prompt optimized for comprehensive knowledge extraction
+# State-of-the-art extraction prompt with ALIASES and TEMPORAL VALIDITY
 EXTRACTION_PROMPT = """
 -Goal-
-Given a text document, exhaustively identify every entity and relationship.
-Extract ALL knowledge - every person, organization, location, product, concept, date, and their connections.
+Extract ALL entities and relationships from this text, including:
+- Entity ALIASES (nicknames, abbreviations, titles, alternative names)
+- TEMPORAL information (when relationships started/ended)
 Target at least {max_triplets} triplets but extract MORE if available.
 
--Entity Types to Extract-
-• PERSON: Names, titles, roles (CEO, founder, engineer, etc.)
-• ORGANIZATION: Companies, institutions, teams, groups
-• PRODUCT: Products, models, services, technologies
-• LOCATION: Cities, countries, headquarters, addresses
-• DATE/TIME: Years, dates, time periods, founding dates
-• CONCEPT: Missions, goals, ideas, industries
-• EVENT: Launches, announcements, milestones
+-Entity Types-
+• PERSON: Names, titles, roles
+• ORGANIZATION: Companies, institutions, groups
+• PRODUCT: Products, services, technologies
+• LOCATION: Cities, countries, addresses
+• DATE/TIME: Years, dates, time periods
+• CONCEPT: Ideas, missions, goals
+• EVENT: Milestones, announcements
 
--Relationship Types to Extract-
-• Leadership: "is CEO of", "leads", "founded", "manages", "directs"
-• Affiliation: "works at", "employed by", "member of", "part of"
-• Creation: "produces", "manufactures", "develops", "designs", "created"
-• Location: "headquartered in", "located in", "based in", "operates in"
-• Temporal: "founded in", "established", "started in", "since"
-• Goal/Purpose: "aims to", "mission is", "goal is", "focuses on"
-• Ownership: "owns", "acquired", "subsidiary of", "parent of"
+-CRITICAL: Extract ALIASES-
+For each entity, identify ALL alternative names, including:
+• Nicknames: "The Iron Man of Tech", "The Quantum Pioneer"
+• Titles: "Dr.", "Professor", "CEO"
+• Abbreviations: "Dr. Chen", "A. Chen", initials
+• Formal/informal: "Alexander Chen" vs "Alex"
+• "Also known as", "nicknamed", "formerly known as"
 
--Critical Instructions-
-1. ALWAYS extract the relationship between a PERSON and ORGANIZATION for roles (CEO, founder, etc.)
-2. ALWAYS extract products/services that organizations produce
-3. ALWAYS extract founding dates and locations
-4. Extract BOTH directions when relevant (e.g., "Elon Musk is CEO of Tesla" AND "Tesla has CEO Elon Musk")
-5. Include descriptive details in entity descriptions
+-Relationship Types with TEMPORAL VALIDITY-
+For relationships that change over time, include:
+• valid_from: When did this relationship START? (ISO date or year)
+• valid_until: When did it END? (ISO date, year, or "present" if ongoing)
+
+Examples of temporal relationships:
+• CEO tenure: "was CEO from 2015 to 2020"
+• Employment: "worked at X from 2010"
+• Previous roles: "former CEO", "ex-employee"
 
 -Format-
-Entity: ("entity"$$$$<name>$$$$<type>$$$$<description>)
-Relationship: ("relationship"$$$$<source>$$$$<target>$$$$<relation>$$$$<description>)
+Entity with aliases:
+("entity"$$$$<name>$$$$<type>$$$$<description>$$$$<aliases comma-separated>)
+
+Relationship with temporal validity:
+("relationship"$$$$<source>$$$$<target>$$$$<relation>$$$$<description>$$$$<valid_from>$$$$<valid_until>)
+
+Use "none" for aliases if no aliases found.
+Use "none" for valid_from/valid_until if not temporal.
 
 -Examples-
-("entity"$$$$Tesla, Inc.$$$$Organization$$$$American electric vehicle company headquartered in Austin, Texas, founded in 2003)
-("entity"$$$$Elon Musk$$$$Person$$$$CEO of Tesla, Inc. and founder of SpaceX)
-("relationship"$$$$Elon Musk$$$$Tesla, Inc.$$$$is CEO of$$$$Elon Musk serves as the Chief Executive Officer of Tesla, Inc.)
-("relationship"$$$$Tesla, Inc.$$$$Model S$$$$produces$$$$Tesla manufactures the Model S electric vehicle)
-("relationship"$$$$Tesla, Inc.$$$$2003$$$$founded in$$$$Tesla, Inc. was founded in 2003)
+("entity"$$$$Alexander Chen$$$$Person$$$$Quantum computing researcher and CEO$$$$Dr. Chen, Alex Chen, A. Chen, The Quantum Pioneer, Professor Chen)
+("entity"$$$$Tesla, Inc.$$$$Organization$$$$Electric vehicle company$$$$Tesla, Tesla Motors)
+("entity"$$$$Elon Musk$$$$Person$$$$CEO of Tesla and SpaceX founder$$$$Musk, The Iron Man of Tech)
+
+("relationship"$$$$Elon Musk$$$$Tesla, Inc.$$$$is CEO of$$$$Current CEO since 2008$$$$2008$$$$present)
+("relationship"$$$$Sarah Williams$$$$NovaTech$$$$was CEO of$$$$Former CEO who stepped down$$$$2015$$$$2018)
+("relationship"$$$$Tesla, Inc.$$$$Model S$$$$produces$$$$Manufactures electric vehicle$$$$none$$$$none)
 
 -Text-
 {text}
 
--Output (extract ALL entities and relationships)-
+-Output (extract ALL with aliases and temporal info)-
+"""
+
+
+# Coreference Resolution Prompt - Links entities across documents
+COREFERENCE_PROMPT = """
+-Goal-
+Identify which entities in Document B refer to the SAME entity as in Document A.
+Link aliases, pronouns, and alternative names to their canonical entity.
+
+-Document A Entities-
+{entities_a}
+
+-Document B Text-
+{text_b}
+
+-Instructions-
+1. Find mentions in Document B that refer to entities from Document A
+2. Consider: pronouns (he, she, they), titles (Dr., CEO), nicknames, abbreviations
+3. "The company" might refer to an organization from Doc A
+4. "He" or "She" might refer to a person from Doc A
+
+-Format-
+("coreference"$$$$<mention_in_doc_b>$$$$<canonical_entity_from_doc_a>$$$$<confidence_0_to_1>)
+
+-Examples-
+("coreference"$$$$The tech giant$$$$Apple Inc.$$$$0.9)
+("coreference"$$$$He$$$$Tim Cook$$$$0.85)
+("coreference"$$$$Dr. Smith$$$$John Smith$$$$0.95)
+("coreference"$$$$The CEO$$$$Elon Musk$$$$0.8)
+
+-Output (list all coreferences found)-
 """
 
 
@@ -155,6 +197,8 @@ class KnowledgeGraph:
         memory_id: str,
         user_id: str = "default",
         progress_callback: Optional[Callable[[str, float], None]] = None,
+        existing_nodes: Optional[List[MemoryNode]] = None,
+        enable_coreference: bool = True,
     ) -> Tuple[List[MemoryNode], List[MemoryEdge]]:
         """
         Extract entities and relationships from content.
@@ -165,9 +209,16 @@ class KnowledgeGraph:
             memory_id: ID of parent memory
             user_id: User ID for multi-tenant isolation
             progress_callback: Optional progress callback
+            existing_nodes: Optional list of already-known entities for coreference resolution
+            enable_coreference: Whether to run coreference resolution (default True)
         
         Returns:
             Tuple of (nodes, edges)
+        
+        NEW FEATURES:
+        - Extracts entity ALIASES (nicknames, abbreviations, titles)
+        - Extracts TEMPORAL VALIDITY (valid_from, valid_until) for relationships
+        - Runs COREFERENCE RESOLUTION to link new mentions to existing entities
         """
         if not content or not content.strip():
             return [], []
@@ -222,6 +273,22 @@ class KnowledgeGraph:
         # Resolve entity duplicates with a per-call resolver (no shared contention)
         resolver = self._resolver_factory()
         nodes = resolver.resolve(all_entities, memory_id, user_id)
+        
+        # NEW: Run coreference resolution if we have existing entities
+        if enable_coreference and existing_nodes and len(existing_nodes) > 0:
+            logger.info(f"Running coreference resolution against {len(existing_nodes)} existing entities...")
+            
+            # Run coreference on the full content
+            coreferences = self.resolve_coreferences(
+                existing_nodes=existing_nodes,
+                new_chunk=content[:5000],  # Sample of content
+                memory_id=memory_id,
+                user_id=user_id,
+            )
+            
+            if coreferences:
+                logger.info(f"Found {len(coreferences)} coreferences, applying to nodes...")
+                nodes = self.apply_coreferences(nodes, coreferences, existing_nodes)
         
         # Update edges with canonical names
         edges = self._resolve_edge_entities(all_relationships, nodes)
@@ -285,9 +352,16 @@ class KnowledgeGraph:
             response = self.llm.complete(prompt)
             entities, relationships = self._parse_extraction_response(response)
             
-            # Create nodes with embeddings for vector search
+            # Create nodes with embeddings and ALIASES
             nodes = []
-            for name, entity_type, description in entities:
+            for entity_data in entities:
+                # Handle both old format (3-tuple) and new format (4-tuple with aliases)
+                if len(entity_data) >= 4:
+                    name, entity_type, description, aliases = entity_data[:4]
+                else:
+                    name, entity_type, description = entity_data[:3]
+                    aliases = set()
+                
                 # Generate embedding for the node (name + description)
                 text_to_embed = f"{name}: {description}" if description else name
                 try:
@@ -301,6 +375,7 @@ class KnowledgeGraph:
                     name=name,
                     entity_type=entity_type,
                     description=description,
+                    aliases=aliases if isinstance(aliases, set) else set(aliases) if aliases else set(),
                     embedding=embedding,  # Add embedding for vector search
                     properties={**metadata, "source_chunk": chunk[:200]},
                     user_id=user_id,     # Multi-tenant isolation
@@ -308,16 +383,32 @@ class KnowledgeGraph:
                 )
                 nodes.append(node)
             
-            # Create edges
+            # Create edges with TEMPORAL VALIDITY
             edges = []
-            for source, target, relation, description in relationships:
+            for rel_data in relationships:
+                # Handle both old format (4-tuple) and new format (6-tuple with temporal)
+                if len(rel_data) >= 6:
+                    source, target, relation, description, valid_from, valid_until = rel_data[:6]
+                elif len(rel_data) >= 4:
+                    source, target, relation, description = rel_data[:4]
+                    valid_from, valid_until = None, None
+                else:
+                    continue
+                
+                # Parse temporal strings to datetime if possible
+                from datetime import datetime
+                valid_from_dt = self._parse_temporal_to_datetime(valid_from)
+                valid_until_dt = self._parse_temporal_to_datetime(valid_until)
+                
                 edge = MemoryEdge(
                     id="",  # Will be generated
                     source_id=source,  # Will be resolved to canonical
                     target_id=target,
                     relation_type=relation,
                     description=description,
-                    properties=metadata,
+                    valid_from=valid_from_dt,
+                    valid_until=valid_until_dt,
+                    properties={**metadata, "temporal_raw": {"from": valid_from, "until": valid_until}},
                     memory_id=memory_id,
                 )
                 edges.append(edge)
@@ -424,49 +515,118 @@ RELATIONSHIP: Elon Musk -> is CEO of -> Tesla | Elon Musk serves as CEO"""
         self,
         response: str,
     ) -> Tuple[List[Tuple], List[Tuple]]:
-        """Parse LLM extraction response."""
+        """
+        Parse LLM extraction response with aliases and temporal validity.
+        
+        New format:
+        - Entity: (name, type, description, aliases)
+        - Relationship: (source, target, relation, description, valid_from, valid_until)
+        """
         entities = []
         relationships = []
         
-        # Try primary format first
-        entity_pattern = r'\("entity"\$\$\$\$"?(.+?)"?\$\$\$\$"?(.+?)"?\$\$\$\$"?(.+?)"?\)'
-        rel_pattern = r'\("relationship"\$\$\$\$"?(.+?)"?\$\$\$\$"?(.+?)"?\$\$\$\$"?(.+?)"?\$\$\$\$"?(.+?)"?\)'
-        
-        entities = re.findall(entity_pattern, response)
-        relationships = re.findall(rel_pattern, response)
-        
-        # Try alternative format
-        if not entities and not relationships:
-            entity_pattern_alt = r'\(entity\$\$\$\$(.+?)\$\$\$\$(.+?)\$\$\$\$(.+?)\)'
-            rel_pattern_alt = r'\(relationship\$\$\$\$(.+?)\$\$\$\$(.+?)\$\$\$\$(.+?)\$\$\$\$(.+?)\)'
+        # Line-based parsing (most reliable)
+        for line in response.split('\n'):
+            line = line.strip()
+            if not line or '$$$$' not in line:
+                continue
             
-            entities = re.findall(entity_pattern_alt, response)
-            relationships = re.findall(rel_pattern_alt, response)
+            # Parse entity with aliases
+            if 'entity' in line.lower():
+                parts = [p.strip().strip('"').strip("'").strip(')').strip('(') for p in line.split('$$$$')]
+                if len(parts) >= 4:
+                    name = parts[1] if len(parts) > 1 else ""
+                    entity_type = parts[2] if len(parts) > 2 else "unknown"
+                    description = parts[3] if len(parts) > 3 else ""
+                    # NEW: Parse aliases (5th field)
+                    aliases_str = parts[4] if len(parts) > 4 else "none"
+                    aliases = self._parse_aliases(aliases_str)
+                    
+                    if name:
+                        entities.append((name, entity_type, description, aliases))
+            
+            # Parse relationship with temporal validity
+            elif 'relationship' in line.lower():
+                parts = [p.strip().strip('"').strip("'").strip(')').strip('(') for p in line.split('$$$$')]
+                if len(parts) >= 5:
+                    source = parts[1] if len(parts) > 1 else ""
+                    target = parts[2] if len(parts) > 2 else ""
+                    relation = parts[3] if len(parts) > 3 else ""
+                    description = parts[4] if len(parts) > 4 else ""
+                    # NEW: Parse temporal validity (6th and 7th fields)
+                    valid_from = self._parse_temporal(parts[5]) if len(parts) > 5 else None
+                    valid_until = self._parse_temporal(parts[6]) if len(parts) > 6 else None
+                    
+                    if source and target and relation:
+                        relationships.append((source, target, relation, description, valid_from, valid_until))
         
-        # Try line-based parsing
-        if not entities and not relationships:
-            for line in response.split('\n'):
-                line = line.strip()
-                if 'entity' in line.lower() and '$$$$' in line:
-                    parts = line.split('$$$$')
-                    if len(parts) >= 4:
-                        entities.append((
-                            parts[1].strip().strip('"'),
-                            parts[2].strip().strip('"'),
-                            parts[3].strip().strip('"'),
-                        ))
-                elif 'relationship' in line.lower() and '$$$$' in line:
-                    parts = line.split('$$$$')
-                    if len(parts) >= 5:
-                        relationships.append((
-                            parts[1].strip().strip('"'),
-                            parts[2].strip().strip('"'),
-                            parts[3].strip().strip('"'),
-                            parts[4].strip().strip('"'),
-                        ))
-        
-        logger.debug(f"Parsed {len(entities)} entities, {len(relationships)} relationships")
+        logger.debug(f"Parsed {len(entities)} entities (with aliases), {len(relationships)} relationships (with temporal)")
         return entities, relationships
+    
+    def _parse_aliases(self, aliases_str: str) -> set:
+        """Parse comma-separated aliases into a set."""
+        if not aliases_str or aliases_str.lower() in ('none', 'n/a', '-', ''):
+            return set()
+        
+        aliases = set()
+        for alias in aliases_str.split(','):
+            alias = alias.strip()
+            if alias and alias.lower() not in ('none', 'n/a'):
+                aliases.add(alias)
+        
+        return aliases
+    
+    def _parse_temporal(self, temporal_str: str) -> Optional[str]:
+        """Parse temporal string (date, year, or 'present')."""
+        if not temporal_str:
+            return None
+        
+        temporal_str = temporal_str.strip().lower()
+        
+        if temporal_str in ('none', 'n/a', '-', '', 'null'):
+            return None
+        
+        if temporal_str == 'present':
+            return 'present'
+        
+        # Try to extract year or date
+        # Match YYYY-MM-DD or YYYY
+        date_match = re.search(r'(\d{4}(?:-\d{2}-\d{2})?)', temporal_str)
+        if date_match:
+            return date_match.group(1)
+        
+        return temporal_str  # Return as-is if can't parse
+    
+    def _parse_temporal_to_datetime(self, temporal_str: Optional[str]):
+        """Convert temporal string to datetime object."""
+        from datetime import datetime
+        
+        if not temporal_str:
+            return None
+        
+        temporal_str = str(temporal_str).strip().lower()
+        
+        if temporal_str in ('none', 'n/a', '-', '', 'null', 'present'):
+            return None  # 'present' means ongoing, so valid_until is None
+        
+        try:
+            # Try YYYY-MM-DD
+            if '-' in temporal_str and len(temporal_str) == 10:
+                return datetime.strptime(temporal_str, '%Y-%m-%d')
+            
+            # Try YYYY
+            if len(temporal_str) == 4 and temporal_str.isdigit():
+                return datetime.strptime(temporal_str, '%Y')
+            
+            # Try to find a year
+            year_match = re.search(r'(\d{4})', temporal_str)
+            if year_match:
+                return datetime.strptime(year_match.group(1), '%Y')
+            
+        except ValueError:
+            pass
+        
+        return None
     
     def _resolve_edge_entities(
         self,
@@ -496,4 +656,116 @@ RELATIONSHIP: Elon Musk -> is CEO of -> Tesla | Elon Musk serves as CEO"""
                 logger.debug(f"Could not resolve edge: {edge.source_id} -> {edge.target_id}")
         
         return resolved_edges
+    
+    def resolve_coreferences(
+        self,
+        existing_nodes: List[MemoryNode],
+        new_chunk: str,
+        memory_id: str,
+        user_id: str = "default",
+    ) -> Dict[str, str]:
+        """
+        Resolve coreferences between existing entities and mentions in new text.
+        
+        Uses LLM to identify which mentions in new_chunk refer to existing entities.
+        Returns a mapping of {mention_in_chunk: canonical_entity_name}
+        
+        This enables cross-document entity linking for:
+        - Pronouns: "He" → "Elon Musk"
+        - Titles: "The CEO" → "Tim Cook"
+        - Nicknames: "The Iron Man of Tech" → "Elon Musk"
+        - Abbreviations: "Dr. Chen" → "Alexander Chen"
+        """
+        if not existing_nodes or not new_chunk:
+            return {}
+        
+        # Format existing entities for the prompt
+        entities_str = "\n".join([
+            f"- {node.name} ({node.entity_type}): {node.description or 'No description'}"
+            for node in existing_nodes[:50]  # Limit to avoid token overflow
+        ])
+        
+        prompt = COREFERENCE_PROMPT.format(
+            entities_a=entities_str,
+            text_b=new_chunk[:3000],  # Limit chunk size
+        )
+        
+        try:
+            response = self.llm.complete(prompt)
+            return self._parse_coreference_response(response)
+        except Exception as e:
+            logger.warning(f"Coreference resolution failed: {e}")
+            return {}
+    
+    def _parse_coreference_response(self, response: str) -> Dict[str, str]:
+        """Parse coreference response into mention→canonical mapping."""
+        coreferences = {}
+        
+        for line in response.split('\n'):
+            line = line.strip()
+            if 'coreference' in line.lower() and '$$$$' in line:
+                parts = [p.strip().strip('"').strip("'").strip(')').strip('(') for p in line.split('$$$$')]
+                if len(parts) >= 3:
+                    mention = parts[1]
+                    canonical = parts[2]
+                    confidence = float(parts[3]) if len(parts) > 3 else 0.5
+                    
+                    # Only accept high-confidence coreferences
+                    if confidence >= 0.7 and mention and canonical:
+                        coreferences[mention.lower()] = canonical
+        
+        logger.info(f"Resolved {len(coreferences)} coreferences")
+        return coreferences
+    
+    def apply_coreferences(
+        self,
+        nodes: List[MemoryNode],
+        coreferences: Dict[str, str],
+        existing_nodes: List[MemoryNode],
+    ) -> List[MemoryNode]:
+        """
+        Apply coreference mappings to link new nodes to existing canonical entities.
+        
+        If a new node's name matches a coreference mention, add the canonical
+        entity name as an alias and update the canonical_name field.
+        """
+        if not coreferences:
+            return nodes
+        
+        # Build canonical name lookup
+        canonical_lookup = {node.name.lower(): node.name for node in existing_nodes}
+        
+        updated_nodes = []
+        for node in nodes:
+            node_name_lower = node.name.lower()
+            
+            # Check if this node's name is a coreference mention
+            if node_name_lower in coreferences:
+                canonical = coreferences[node_name_lower]
+                
+                # Update node to link to canonical entity
+                new_aliases = node.aliases.copy() if node.aliases else set()
+                new_aliases.add(node.name)  # Add original name as alias
+                
+                # Find the actual canonical entity
+                canonical_actual = canonical_lookup.get(canonical.lower(), canonical)
+                
+                updated_node = MemoryNode(
+                    id=node.id,
+                    name=canonical_actual,  # Use canonical name
+                    entity_type=node.entity_type,
+                    description=node.description,
+                    canonical_name=canonical_actual,
+                    aliases=new_aliases,
+                    embedding=node.embedding,
+                    properties={**node.properties, "coreference_resolved": True, "original_mention": node.name},
+                    user_id=node.user_id,
+                    memory_id=node.memory_id,
+                )
+                updated_nodes.append(updated_node)
+                logger.debug(f"Resolved coreference: '{node.name}' → '{canonical_actual}'")
+            else:
+                updated_nodes.append(node)
+        
+        return updated_nodes
 
