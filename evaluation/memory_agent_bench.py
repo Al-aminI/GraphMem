@@ -2,11 +2,29 @@
 """
 MemoryAgentBench Evaluation for GraphMem
 
-Evaluates GraphMem on the MemoryAgentBench dataset which tests 4 core memory competencies:
-1. Accurate Retrieval (AR) - Locating required information from massive histories
-2. Test-Time Learning (TTL) - Learning new skills during interactions  
-3. Long-Range Understanding (LRU) - Forming global cognition from long conversations
-4. Conflict Resolution (CR) - Identifying and updating outdated information
+Properly evaluates GraphMem on 4 core memory competencies:
+
+1. ACCURATE RETRIEVAL (AR) - 22 samples
+   - Ingest full context (long documents)
+   - Query for specific facts (single-hop and multi-hop)
+   - Tests: precise information retrieval from massive histories
+
+2. TEST-TIME LEARNING (TTL) - 6 samples  
+   - Feed demonstrations/examples
+   - Test if system learned patterns
+   - Tests: in-context learning, pattern recognition
+
+3. LONG-RANGE UNDERSTANDING (LRU) - 110 samples
+   - Context is narrative (novel chapters)
+   - Questions: "what happens next" based on previous events
+   - Tests: global cognition, plot understanding, event prediction
+   - Uses metadata.previous_events for context
+
+4. CONFLICT RESOLUTION (CR) - 8 samples
+   - Feed initial facts, then conflicting updates
+   - Check if NEW information is returned (not old)
+   - Tests: TEMPORAL VALIDITY, updating outdated info
+   - This is where GraphMem's temporal features shine!
 
 Dataset: https://huggingface.co/datasets/ai-hyz/MemoryAgentBench
 Paper: https://arxiv.org/pdf/2507.05257
@@ -16,11 +34,8 @@ Usage:
         --provider azure \
         --api-key "..." \
         --azure-endpoint "https://..." \
-        --azure-deployment "gpt-4.1-mini" \
-        --azure-embedding-deployment "text-embedding-3-small" \
-        --split Accurate_Retrieval \
-        --max-samples 5 \
-        --max-questions 20
+        --split Conflict_Resolution \
+        --max-samples 2
 """
 
 import argparse
@@ -32,7 +47,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
 import sys
 
 # Add parent to path
@@ -56,41 +71,41 @@ class QuestionResult:
     expected: str
     predicted: str
     correct: bool
+    score: float  # 0-1
     latency_ms: float
-    context_tokens: int = 0
+    question_type: str = ""  # single_hop, multi_hop, temporal, etc.
+
+
+@dataclass 
+class EvolutionMetrics:
+    """Metrics from memory evolution."""
+    nodes_before: int = 0
+    nodes_after: int = 0
+    nodes_consolidated: int = 0
+    relationships_before: int = 0
+    relationships_after: int = 0
+    clusters_formed: int = 0
+    evolution_time_s: float = 0.0
 
 
 @dataclass
-class SampleResult:
-    """Result for a single sample (context + multiple questions)."""
-    sample_id: int
-    split: str
-    num_questions: int
-    num_correct: int
-    accuracy: float
-    questions: List[QuestionResult] = field(default_factory=list)
-    ingestion_time_s: float = 0.0
-    total_entities: int = 0
-    total_relationships: int = 0
-
-
-@dataclass
-class BenchmarkResults:
-    """Overall benchmark results."""
+class SplitResult:
+    """Result for a dataset split."""
     split: str
     total_samples: int
     total_questions: int
-    total_correct: int
+    correct: int
     accuracy: float
+    avg_score: float
     avg_latency_ms: float
-    total_ingestion_time_s: float
-    avg_entities_per_sample: float
-    avg_relationships_per_sample: float
-    samples: List[SampleResult] = field(default_factory=list)
+    # Evolution
+    evolution: EvolutionMetrics = field(default_factory=EvolutionMetrics)
+    # Per-question results
+    questions: List[QuestionResult] = field(default_factory=list)
 
 
 # ============================================================================
-# ANSWER CHECKER
+# ANSWER CHECKER (LLM-as-Judge)
 # ============================================================================
 class AnswerChecker:
     """LLM-as-judge for answer correctness."""
@@ -99,14 +114,10 @@ class AnswerChecker:
         self.llm = llm_provider
     
     def check(self, question: str, expected: str, predicted: str) -> Tuple[bool, float]:
-        """
-        Check if predicted answer is correct using LLM-as-judge.
-        Returns (is_correct, score 0-1).
-        """
+        """Check if predicted answer is correct. Returns (is_correct, score)."""
         if not predicted or predicted.strip() == "":
             return False, 0.0
         
-        # Normalize for simple cases
         expected_lower = expected.lower().strip()
         predicted_lower = predicted.lower().strip()
         
@@ -114,137 +125,40 @@ class AnswerChecker:
         if expected_lower == predicted_lower:
             return True, 1.0
         
-        # Check if expected is contained in predicted
+        # Expected contained in predicted
         if expected_lower in predicted_lower:
             return True, 1.0
         
-        # For yes/no questions
+        # Yes/No questions
         if expected_lower in ["yes", "no"]:
-            if expected_lower in predicted_lower.split()[:5]:
+            first_words = predicted_lower.split()[:5]
+            if expected_lower in first_words:
                 return True, 1.0
         
-        # LLM-as-judge for complex cases
-        prompt = f"""You are evaluating if a predicted answer is correct.
+        # LLM judge for complex cases
+        prompt = f"""Evaluate if the predicted answer is correct.
 
 Question: {question}
+Expected: {expected}
+Predicted: {predicted}
 
-Expected Answer: {expected}
-
-Predicted Answer: {predicted}
-
-Is the predicted answer semantically equivalent to or contains the expected answer?
-Consider:
-- The core information must match
+Is the predicted answer semantically correct? Consider:
+- Core information must match
 - Phrasing can differ
-- Extra information is OK if the core answer is present
+- Extra info is OK if core answer is present
 
-Respond with ONLY a JSON object:
-{{"correct": true/false, "score": 0.0-1.0, "reason": "brief explanation"}}"""
+Respond ONLY with JSON: {{"correct": true/false, "score": 0.0-1.0}}"""
 
         try:
-            messages = [{"role": "user", "content": prompt}]
-            response = self.llm.chat(messages, temperature=0.0)
-            
-            # Parse JSON
-            json_match = re.search(r'\{[^}]+\}', response, re.DOTALL)
-            if json_match:
-                result = json.loads(json_match.group())
+            response = self.llm.chat([{"role": "user", "content": prompt}], temperature=0.0)
+            match = re.search(r'\{[^}]+\}', response, re.DOTALL)
+            if match:
+                result = json.loads(match.group())
                 return result.get("correct", False), float(result.get("score", 0.0))
         except Exception as e:
-            logger.warning(f"LLM judge failed: {e}")
+            logger.debug(f"LLM judge error: {e}")
         
         return False, 0.0
-
-
-# ============================================================================
-# NAIVE RAG BASELINE
-# ============================================================================
-class NaiveRAGBaseline:
-    """Simple chunk-and-retrieve RAG for comparison."""
-    
-    def __init__(self, llm_provider, embedding_provider, chunk_size: int = 1000):
-        self.llm = llm_provider
-        self.embedder = embedding_provider
-        self.chunk_size = chunk_size
-        self.chunks: List[Dict] = []
-        self.embeddings: List[List[float]] = []
-    
-    def clear(self):
-        """Clear all stored chunks."""
-        self.chunks = []
-        self.embeddings = []
-    
-    def ingest(self, content: str):
-        """Chunk and embed content."""
-        import numpy as np
-        
-        # Simple word-based chunking
-        words = content.split()
-        chunk_words = []
-        
-        for word in words:
-            chunk_words.append(word)
-            if len(' '.join(chunk_words)) >= self.chunk_size:
-                chunk_content = ' '.join(chunk_words)
-                try:
-                    embedding = self.embedder.embed_text(chunk_content)
-                    self.chunks.append({"content": chunk_content})
-                    self.embeddings.append(embedding)
-                except Exception as e:
-                    logger.warning(f"Embedding failed: {e}")
-                chunk_words = []
-        
-        # Remaining
-        if chunk_words:
-            chunk_content = ' '.join(chunk_words)
-            try:
-                embedding = self.embedder.embed_text(chunk_content)
-                self.chunks.append({"content": chunk_content})
-                self.embeddings.append(embedding)
-            except Exception as e:
-                pass
-    
-    def query(self, question: str, top_k: int = 5) -> str:
-        """Retrieve and answer."""
-        import numpy as np
-        
-        if not self.embeddings:
-            return "No context available."
-        
-        # Embed query
-        try:
-            query_emb = self.embedder.embed_text(question)
-        except:
-            return "Embedding failed."
-        
-        # Find top-k
-        similarities = []
-        for i, chunk_emb in enumerate(self.embeddings):
-            a = np.array(query_emb)
-            b = np.array(chunk_emb)
-            sim = np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b) + 1e-8)
-            similarities.append((i, sim))
-        
-        similarities.sort(key=lambda x: x[1], reverse=True)
-        
-        # Build context
-        context = "\n\n".join([self.chunks[i]["content"] for i, _ in similarities[:top_k]])
-        
-        # Generate answer
-        prompt = f"""Answer the question based on the context. Be concise and direct.
-
-Context:
-{context[:8000]}
-
-Question: {question}
-
-Answer:"""
-        
-        try:
-            messages = [{"role": "user", "content": prompt}]
-            return self.llm.chat(messages)
-        except Exception as e:
-            return f"Error: {e}"
 
 
 # ============================================================================
@@ -252,21 +166,12 @@ Answer:"""
 # ============================================================================
 class MemoryAgentBenchEvaluator:
     """
-    Evaluator for MemoryAgentBench dataset.
+    Proper evaluation for MemoryAgentBench dataset.
     
-    Tests GraphMem on 4 core memory competencies:
-    - Accurate Retrieval (AR)
-    - Test-Time Learning (TTL)
-    - Long-Range Understanding (LRU)
-    - Conflict Resolution (CR)
+    Each split is evaluated differently based on what it tests.
     """
     
-    SPLITS = [
-        "Accurate_Retrieval",
-        "Test_Time_Learning", 
-        "Long_Range_Understanding",
-        "Conflict_Resolution",
-    ]
+    SPLITS = ["Accurate_Retrieval", "Test_Time_Learning", "Long_Range_Understanding", "Conflict_Resolution"]
     
     def __init__(
         self,
@@ -289,35 +194,26 @@ class MemoryAgentBenchEvaluator:
         self.azure_embedding_deployment = azure_embedding_deployment or embedding_model
         self.turso_db_path = turso_db_path
         self.debug = debug
-        
         self.dataset = None
-        self.graphmem_results: Dict[str, BenchmarkResults] = {}
-        self.naive_results: Dict[str, BenchmarkResults] = {}
     
     def _load_dataset(self):
-        """Load MemoryAgentBench from HuggingFace."""
+        """Load from HuggingFace."""
         try:
             from datasets import load_dataset
-            logger.info("Loading MemoryAgentBench dataset from HuggingFace...")
+            logger.info("📥 Loading MemoryAgentBench from HuggingFace...")
             self.dataset = load_dataset("ai-hyz/MemoryAgentBench")
-            logger.info(f"Dataset loaded with splits: {list(self.dataset.keys())}")
-            for split in self.dataset.keys():
-                logger.info(f"  {split}: {len(self.dataset[split])} samples")
+            for split in self.dataset:
+                logger.info(f"   {split}: {len(self.dataset[split])} samples")
         except ImportError:
-            logger.error("Install datasets: pip install datasets")
-            raise
-        except Exception as e:
-            logger.error(f"Failed to load dataset: {e}")
-            raise
+            raise ImportError("Install: pip install datasets")
     
-    def _init_graphmem(self):
-        """Initialize GraphMem."""
+    def _init_graphmem(self, fresh: bool = True):
+        """Initialize GraphMem instance."""
         from graphmem import GraphMem, MemoryConfig
         
         provider_name = "azure_openai" if self.provider == "azure" else self.provider
         
-        # Clean up existing DB
-        if os.path.exists(self.turso_db_path):
+        if fresh and os.path.exists(self.turso_db_path):
             os.remove(self.turso_db_path)
         
         config = MemoryConfig(
@@ -337,13 +233,11 @@ class MemoryAgentBenchEvaluator:
         
         return GraphMem(config)
     
-    def _init_naive_rag(self):
-        """Initialize Naive RAG baseline."""
+    def _init_checker(self):
+        """Initialize answer checker."""
         from graphmem.llm.providers import get_llm_provider
-        from graphmem.llm.embeddings import get_embedding_provider
         
         provider_name = "azure_openai" if self.provider == "azure" else self.provider
-        
         llm = get_llm_provider(
             provider=provider_name,
             api_key=self.api_key,
@@ -352,399 +246,517 @@ class MemoryAgentBenchEvaluator:
             api_version="2024-08-01-preview",
             deployment=self.azure_deployment,
         )
-        
-        embedder = get_embedding_provider(
-            provider=provider_name,
-            api_key=self.api_key,
-            api_base=self.api_base,
-            model=self.embedding_model,
-            api_version="2024-08-01-preview",
-            deployment=self.azure_embedding_deployment,
-        )
-        
-        return NaiveRAGBaseline(llm, embedder)
-    
-    def _init_answer_checker(self):
-        """Initialize LLM-as-judge."""
-        from graphmem.llm.providers import get_llm_provider
-        
-        provider_name = "azure_openai" if self.provider == "azure" else self.provider
-        
-        llm = get_llm_provider(
-            provider=provider_name,
-            api_key=self.api_key,
-            api_base=self.api_base,
-            model=self.llm_model,
-            api_version="2024-08-01-preview",
-            deployment=self.azure_deployment,
-        )
-        
         return AnswerChecker(llm)
     
-    def run_split(
-        self,
-        split: str,
-        max_samples: int = None,
-        max_questions: int = None,
-        compare_naive: bool = True,
-    ) -> Tuple[BenchmarkResults, Optional[BenchmarkResults]]:
+    # ========================================================================
+    # SPLIT-SPECIFIC EVALUATION METHODS
+    # ========================================================================
+    
+    def eval_accurate_retrieval(self, sample: Dict, gm, checker: AnswerChecker) -> List[QuestionResult]:
         """
-        Run evaluation on a specific split.
+        ACCURATE RETRIEVAL (AR)
         
-        Args:
-            split: Dataset split (Accurate_Retrieval, Test_Time_Learning, etc.)
-            max_samples: Max samples to evaluate (None = all)
-            max_questions: Max questions per sample (None = all)
-            compare_naive: Whether to also run NaiveRAG baseline
+        Task: Find specific information from massive context
+        - Ingest full context
+        - Query for facts (single-hop and multi-hop)
         """
+        context = sample["context"]
+        questions = sample["questions"]
+        answers = sample["answers"]
+        
+        results = []
+        
+        # Ingest full context in chunks using batch ingestion (20 workers)
+        logger.info("      📄 Ingesting context with 20 workers...")
+        chunk_size = 8000
+        chunks = [context[i:i+chunk_size] for i in range(0, len(context), chunk_size)]
+        
+        # Prepare documents for batch ingestion
+        documents = [{"id": f"chunk_{i}", "content": chunk} for i, chunk in enumerate(chunks[:100])]
+        
+        try:
+            gm.ingest_batch(
+                documents=documents,
+                max_workers=20,
+                show_progress=True,
+                aggressive=True,  # Infinite retry on rate limits
+            )
+        except Exception as e:
+            logger.warning(f"Batch ingestion error: {e}")
+        
+        # Run evolution to consolidate entities
+        logger.info("      🔄 Evolving memory...")
+        try:
+            gm.evolve()
+        except Exception as e:
+            logger.debug(f"Evolution error: {e}")
+        
+        # Query each question
+        for i, (q, a_list) in enumerate(zip(questions, answers)):
+            expected = a_list[0] if isinstance(a_list, list) else a_list
+            
+            start = time.time()
+            try:
+                response = gm.query(q)
+                predicted = response.answer
+            except Exception as e:
+                predicted = f"Error: {e}"
+            latency = (time.time() - start) * 1000
+            
+            is_correct, score = checker.check(q, expected, predicted)
+            
+            results.append(QuestionResult(
+                question=q,
+                expected=expected,
+                predicted=predicted,
+                correct=is_correct,
+                score=score,
+                latency_ms=latency,
+                question_type="retrieval",
+            ))
+            
+            if self.debug:
+                status = "✅" if is_correct else "❌"
+                logger.info(f"      {status} Q{i+1}: {q[:60]}...")
+                logger.info(f"         Expected: {expected[:60]}")
+                logger.info(f"         Got: {predicted[:60]}")
+        
+        return results
+    
+    def eval_test_time_learning(self, sample: Dict, gm, checker: AnswerChecker) -> List[QuestionResult]:
+        """
+        TEST-TIME LEARNING (TTL)
+        
+        Task: Learn patterns from examples and apply them
+        - Feed demonstrations first
+        - Test if system learned the pattern
+        """
+        context = sample["context"]
+        questions = sample["questions"]
+        answers = sample["answers"]
+        metadata = sample.get("metadata", {})
+        
+        results = []
+        
+        # For TTL, context often contains demonstrations
+        # Ingest and let GraphMem extract patterns
+        logger.info("      📚 Learning from demonstrations (20 workers)...")
+        
+        chunk_size = 5000
+        chunks = [context[i:i+chunk_size] for i in range(0, len(context), chunk_size)]
+        
+        # Prepare documents for batch ingestion
+        documents = [{"id": f"demo_{i}", "content": chunk} for i, chunk in enumerate(chunks[:50])]
+        
+        try:
+            gm.ingest_batch(
+                documents=documents,
+                max_workers=20,
+                show_progress=True,
+                aggressive=True,
+            )
+        except Exception as e:
+            logger.warning(f"Demo ingestion error: {e}")
+        
+        # Evolve to consolidate learned patterns
+        logger.info("      🔄 Consolidating learned patterns...")
+        try:
+            gm.evolve()
+        except:
+            pass
+        
+        # Test questions
+        for i, (q, a_list) in enumerate(zip(questions, answers)):
+            expected = a_list[0] if isinstance(a_list, list) else a_list
+            
+            start = time.time()
+            try:
+                response = gm.query(q)
+                predicted = response.answer
+            except Exception as e:
+                predicted = f"Error: {e}"
+            latency = (time.time() - start) * 1000
+            
+            is_correct, score = checker.check(q, expected, predicted)
+            
+            results.append(QuestionResult(
+                question=q,
+                expected=expected,
+                predicted=predicted,
+                correct=is_correct,
+                score=score,
+                latency_ms=latency,
+                question_type="learning",
+            ))
+            
+            if self.debug:
+                status = "✅" if is_correct else "❌"
+                logger.info(f"      {status} Q{i+1}: {q[:60]}...")
+        
+        return results
+    
+    def eval_long_range_understanding(self, sample: Dict, gm, checker: AnswerChecker) -> List[QuestionResult]:
+        """
+        LONG-RANGE UNDERSTANDING (LRU)
+        
+        Task: Understand narrative flow, predict what happens next
+        - Context is narrative (novel chapters)
+        - Questions use previous_events from metadata
+        - Tests: global understanding, event sequences
+        
+        This is where GraphMem's relationship tracking shines!
+        """
+        context = sample["context"]
+        questions = sample["questions"]
+        answers = sample["answers"]
+        metadata = sample.get("metadata", {})
+        previous_events = metadata.get("previous_events", [])
+        keypoints = metadata.get("keypoints", [])
+        
+        results = []
+        
+        # Ingest the narrative with batch processing
+        logger.info("      📖 Ingesting narrative (20 workers)...")
+        chunk_size = 6000
+        chunks = [context[i:i+chunk_size] for i in range(0, len(context), chunk_size)]
+        
+        # Prepare documents for batch ingestion
+        documents = [{"id": f"narrative_{i}", "content": chunk} for i, chunk in enumerate(chunks[:80])]
+        
+        try:
+            gm.ingest_batch(
+                documents=documents,
+                max_workers=20,
+                show_progress=True,
+                aggressive=True,
+            )
+        except Exception as e:
+            logger.warning(f"Narrative ingestion error: {e}")
+        
+        # Evolve to build relationship graph (character relationships, event chains)
+        logger.info("      🔄 Building narrative graph...")
+        try:
+            gm.evolve()
+        except:
+            pass
+        
+        # If we have keypoints, ingest them as additional context
+        if keypoints:
+            logger.info(f"      📌 Processing {len(keypoints)} keypoints...")
+            kp_docs = [{"id": f"keypoint_{i}", "content": str(kp)} for i, kp in enumerate(keypoints[:20])]
+            try:
+                gm.ingest_batch(
+                    documents=kp_docs,
+                    max_workers=20,
+                    show_progress=False,
+                    aggressive=True,
+                )
+            except:
+                pass
+        
+        # Query with previous_events context
+        for i, (q, a_list) in enumerate(zip(questions, answers)):
+            expected = a_list[0] if isinstance(a_list, list) else a_list
+            
+            # LRU questions often include "These are the events that have already occurred"
+            # The question itself contains the context
+            
+            start = time.time()
+            try:
+                response = gm.query(q)
+                predicted = response.answer
+            except Exception as e:
+                predicted = f"Error: {e}"
+            latency = (time.time() - start) * 1000
+            
+            is_correct, score = checker.check(q, expected, predicted)
+            
+            results.append(QuestionResult(
+                question=q,
+                expected=expected,
+                predicted=predicted,
+                correct=is_correct,
+                score=score,
+                latency_ms=latency,
+                question_type="understanding",
+            ))
+            
+            if self.debug:
+                status = "✅" if is_correct else "❌"
+                logger.info(f"      {status} Q{i+1}: {q[:80]}...")
+                logger.info(f"         Expected: {expected[:80]}")
+        
+        return results
+    
+    def eval_conflict_resolution(self, sample: Dict, gm, checker: AnswerChecker) -> List[QuestionResult]:
+        """
+        CONFLICT RESOLUTION (CR)
+        
+        Task: Handle conflicting/updated information
+        - Ingest initial facts
+        - Ingest conflicting updates
+        - Query and verify NEW information is returned
+        
+        THIS IS WHERE GRAPHMEM'S TEMPORAL VALIDITY SHINES!
+        - valid_from / valid_until on relationships
+        - Superseding old facts with new ones
+        """
+        context = sample["context"]
+        questions = sample["questions"]
+        answers = sample["answers"]
+        
+        results = []
+        
+        logger.info("      ⚡ CONFLICT RESOLUTION - Testing temporal validity...")
+        
+        # Split context to simulate temporal updates
+        # Typically, earlier parts have old facts, later parts have updates
+        total_len = len(context)
+        
+        # Phase 1: Ingest first 60% (initial facts) with batch processing
+        initial_context = context[:int(total_len * 0.6)]
+        logger.info("      📝 Phase 1: Ingesting initial facts (20 workers)...")
+        
+        chunk_size = 5000
+        chunks = [initial_context[i:i+chunk_size] for i in range(0, len(initial_context), chunk_size)]
+        
+        # Batch ingest initial facts
+        initial_docs = [{"id": f"initial_{i}", "content": chunk} for i, chunk in enumerate(chunks[:30])]
+        try:
+            gm.ingest_batch(
+                documents=initial_docs,
+                max_workers=20,
+                show_progress=True,
+                aggressive=True,
+            )
+        except Exception as e:
+            logger.warning(f"Initial facts ingestion error: {e}")
+        
+        # Evolve to establish initial knowledge
+        try:
+            gm.evolve()
+        except:
+            pass
+        
+        # Phase 2: Ingest remaining 40% (updates/conflicts) with batch processing
+        update_context = context[int(total_len * 0.6):]
+        logger.info("      🔄 Phase 2: Ingesting updates/conflicts (20 workers)...")
+        
+        chunks = [update_context[i:i+chunk_size] for i in range(0, len(update_context), chunk_size)]
+        
+        # Batch ingest updates
+        update_docs = [{"id": f"update_{i}", "content": chunk} for i, chunk in enumerate(chunks[:20])]
+        try:
+            gm.ingest_batch(
+                documents=update_docs,
+                max_workers=20,
+                show_progress=True,
+                aggressive=True,
+            )
+        except Exception as e:
+            logger.warning(f"Updates ingestion error: {e}")
+        
+        # Evolve again - this should handle conflicts via temporal validity
+        logger.info("      🔄 Resolving conflicts via evolution...")
+        try:
+            gm.evolve()
+        except:
+            pass
+        
+        # Query - should return UPDATED information, not old
+        for i, (q, a_list) in enumerate(zip(questions, answers)):
+            expected = a_list[0] if isinstance(a_list, list) else a_list
+            
+            start = time.time()
+            try:
+                response = gm.query(q)
+                predicted = response.answer
+            except Exception as e:
+                predicted = f"Error: {e}"
+            latency = (time.time() - start) * 1000
+            
+            is_correct, score = checker.check(q, expected, predicted)
+            
+            results.append(QuestionResult(
+                question=q,
+                expected=expected,
+                predicted=predicted,
+                correct=is_correct,
+                score=score,
+                latency_ms=latency,
+                question_type="conflict_resolution",
+            ))
+            
+            if self.debug:
+                status = "✅" if is_correct else "❌"
+                logger.info(f"      {status} Q{i+1}: {q[:60]}...")
+                logger.info(f"         Expected (NEW): {expected[:60]}")
+                logger.info(f"         Got: {predicted[:60]}")
+        
+        return results
+    
+    # ========================================================================
+    # MAIN EVALUATION
+    # ========================================================================
+    
+    def run_split(self, split: str, max_samples: int = None, max_questions: int = None) -> SplitResult:
+        """Run evaluation on a specific split."""
         if self.dataset is None:
             self._load_dataset()
         
         if split not in self.dataset:
-            raise ValueError(f"Invalid split: {split}. Available: {list(self.dataset.keys())}")
+            raise ValueError(f"Invalid split: {split}")
         
-        data = self.dataset[split]
-        samples = list(data)
-        
+        samples = list(self.dataset[split])
         if max_samples:
             samples = samples[:max_samples]
         
-        logger.info(f"\n{'='*80}")
-        logger.info(f"📊 EVALUATING: {split}")
-        logger.info(f"   Samples: {len(samples)}")
-        logger.info(f"   Max questions per sample: {max_questions or 'all'}")
-        logger.info(f"{'='*80}")
+        print(f"\n{'='*80}")
+        print(f"📊 EVALUATING: {split}")
+        print(f"   Samples: {len(samples)}")
+        print(f"{'='*80}")
         
-        # Initialize
-        answer_checker = self._init_answer_checker()
+        checker = self._init_checker()
+        all_results = []
+        total_evolution = EvolutionMetrics()
         
-        # Results
-        gm_sample_results = []
-        naive_sample_results = []
+        # Select evaluation method based on split
+        eval_method = {
+            "Accurate_Retrieval": self.eval_accurate_retrieval,
+            "Test_Time_Learning": self.eval_test_time_learning,
+            "Long_Range_Understanding": self.eval_long_range_understanding,
+            "Conflict_Resolution": self.eval_conflict_resolution,
+        }.get(split, self.eval_accurate_retrieval)
         
-        for sample_idx, sample in enumerate(samples):
-            context = sample["context"]
-            questions = sample["questions"]
-            answers = sample["answers"]
-            
-            if max_questions:
-                questions = questions[:max_questions]
-                answers = answers[:max_questions]
-            
-            logger.info(f"\n--- Sample {sample_idx + 1}/{len(samples)} ---")
-            logger.info(f"   Context length: {len(context):,} chars")
-            logger.info(f"   Questions: {len(questions)}")
-            
-            # =============== GRAPHMEM ===============
-            logger.info(f"\n   🧠 GraphMem:")
+        for idx, sample in enumerate(samples):
+            print(f"\n--- Sample {idx+1}/{len(samples)} ---")
+            print(f"   Context: {len(sample['context']):,} chars")
+            print(f"   Questions: {len(sample['questions'])}")
             
             # Fresh GraphMem for each sample
-            gm = self._init_graphmem()
+            gm = self._init_graphmem(fresh=True)
             
-            # Ingest context
-            ingest_start = time.time()
+            # Get stats before
             try:
-                # Split large context into chunks for ingestion
-                chunk_size = 10000
-                chunks = [context[i:i+chunk_size] for i in range(0, len(context), chunk_size)]
-                
-                for i, chunk in enumerate(chunks[:50]):  # Limit to first 50 chunks
-                    gm.ingest(chunk)
-                    if (i + 1) % 10 == 0:
-                        logger.info(f"      Ingested {i+1}/{min(len(chunks), 50)} chunks...")
-                
-            except Exception as e:
-                logger.warning(f"      Ingestion error: {e}")
-            
-            ingest_time = time.time() - ingest_start
-            logger.info(f"      Ingestion: {ingest_time:.1f}s")
-            
-            # Get memory stats
-            try:
-                memory = gm._memory
-                num_entities = len(memory.nodes)
-                num_relationships = len(memory.edges)
-                logger.info(f"      Entities: {num_entities}, Relationships: {num_relationships}")
+                nodes_before = len(gm._memory.nodes)
+                rels_before = len(gm._memory.edges)
             except:
-                num_entities = 0
-                num_relationships = 0
+                nodes_before, rels_before = 0, 0
             
-            # Query
-            gm_questions = []
-            gm_correct = 0
+            # Run split-specific evaluation
+            start = time.time()
+            questions_to_eval = sample["questions"]
+            answers_to_eval = sample["answers"]
             
-            for q_idx, (q, a_list) in enumerate(zip(questions, answers)):
-                # Handle multiple acceptable answers
-                expected = a_list[0] if isinstance(a_list, list) else a_list
-                
-                q_start = time.time()
-                try:
-                    response = gm.query(q)
-                    predicted = response.answer
-                except Exception as e:
-                    predicted = f"Error: {e}"
-                q_time = (time.time() - q_start) * 1000
-                
-                # Check correctness
-                is_correct, score = answer_checker.check(q, expected, predicted)
-                if is_correct:
-                    gm_correct += 1
-                
-                gm_questions.append(QuestionResult(
-                    question=q,
-                    expected=expected,
-                    predicted=predicted,
-                    correct=is_correct,
-                    latency_ms=q_time,
-                ))
-                
-                if self.debug:
-                    status = "✅" if is_correct else "❌"
-                    logger.info(f"      {status} Q{q_idx+1}: {q[:50]}...")
-                    logger.info(f"         Expected: {expected[:50]}...")
-                    logger.info(f"         Got: {predicted[:50]}...")
+            if max_questions:
+                sample = dict(sample)
+                sample["questions"] = questions_to_eval[:max_questions]
+                sample["answers"] = answers_to_eval[:max_questions]
             
-            gm_accuracy = gm_correct / len(questions) if questions else 0
-            logger.info(f"      Accuracy: {gm_accuracy:.1%} ({gm_correct}/{len(questions)})")
+            results = eval_method(sample, gm, checker)
+            eval_time = time.time() - start
             
-            gm_sample_results.append(SampleResult(
-                sample_id=sample_idx,
-                split=split,
-                num_questions=len(questions),
-                num_correct=gm_correct,
-                accuracy=gm_accuracy,
-                questions=gm_questions,
-                ingestion_time_s=ingest_time,
-                total_entities=num_entities,
-                total_relationships=num_relationships,
-            ))
+            # Get stats after
+            try:
+                nodes_after = len(gm._memory.nodes)
+                rels_after = len(gm._memory.edges)
+                clusters = len(gm._memory.clusters) if hasattr(gm._memory, 'clusters') else 0
+            except:
+                nodes_after, rels_after, clusters = 0, 0, 0
             
-            # =============== NAIVE RAG ===============
-            if compare_naive:
-                logger.info(f"\n   📚 NaiveRAG:")
-                
-                naive = self._init_naive_rag()
-                
-                # Ingest
-                naive_start = time.time()
-                naive.ingest(context[:500000])  # Limit context size
-                naive_ingest_time = time.time() - naive_start
-                logger.info(f"      Ingestion: {naive_ingest_time:.1f}s ({len(naive.chunks)} chunks)")
-                
-                # Query
-                naive_questions = []
-                naive_correct = 0
-                
-                for q_idx, (q, a_list) in enumerate(zip(questions, answers)):
-                    expected = a_list[0] if isinstance(a_list, list) else a_list
-                    
-                    q_start = time.time()
-                    predicted = naive.query(q)
-                    q_time = (time.time() - q_start) * 1000
-                    
-                    is_correct, score = answer_checker.check(q, expected, predicted)
-                    if is_correct:
-                        naive_correct += 1
-                    
-                    naive_questions.append(QuestionResult(
-                        question=q,
-                        expected=expected,
-                        predicted=predicted,
-                        correct=is_correct,
-                        latency_ms=q_time,
-                    ))
-                
-                naive_accuracy = naive_correct / len(questions) if questions else 0
-                logger.info(f"      Accuracy: {naive_accuracy:.1%} ({naive_correct}/{len(questions)})")
-                
-                naive_sample_results.append(SampleResult(
-                    sample_id=sample_idx,
-                    split=split,
-                    num_questions=len(questions),
-                    num_correct=naive_correct,
-                    accuracy=naive_accuracy,
-                    questions=naive_questions,
-                    ingestion_time_s=naive_ingest_time,
-                ))
+            # Accumulate
+            all_results.extend(results)
+            total_evolution.nodes_before += nodes_before
+            total_evolution.nodes_after += nodes_after
+            total_evolution.relationships_before += rels_before
+            total_evolution.relationships_after += rels_after
+            total_evolution.clusters_formed += clusters
+            total_evolution.evolution_time_s += eval_time
+            
+            # Print sample summary
+            correct = sum(1 for r in results if r.correct)
+            print(f"   ✅ Accuracy: {correct}/{len(results)} ({100*correct/len(results):.1f}%)")
+            print(f"   🧠 Entities: {nodes_before} → {nodes_after}")
+            print(f"   🔗 Relationships: {rels_before} → {rels_after}")
         
-        # Aggregate results
-        gm_total_q = sum(s.num_questions for s in gm_sample_results)
-        gm_total_correct = sum(s.num_correct for s in gm_sample_results)
-        gm_all_latencies = [q.latency_ms for s in gm_sample_results for q in s.questions]
+        # Aggregate
+        total_correct = sum(1 for r in all_results if r.correct)
+        total_questions = len(all_results)
         
-        gm_results = BenchmarkResults(
+        result = SplitResult(
             split=split,
-            total_samples=len(gm_sample_results),
-            total_questions=gm_total_q,
-            total_correct=gm_total_correct,
-            accuracy=gm_total_correct / gm_total_q if gm_total_q else 0,
-            avg_latency_ms=sum(gm_all_latencies) / len(gm_all_latencies) if gm_all_latencies else 0,
-            total_ingestion_time_s=sum(s.ingestion_time_s for s in gm_sample_results),
-            avg_entities_per_sample=sum(s.total_entities for s in gm_sample_results) / len(gm_sample_results) if gm_sample_results else 0,
-            avg_relationships_per_sample=sum(s.total_relationships for s in gm_sample_results) / len(gm_sample_results) if gm_sample_results else 0,
-            samples=gm_sample_results,
+            total_samples=len(samples),
+            total_questions=total_questions,
+            correct=total_correct,
+            accuracy=total_correct / total_questions if total_questions else 0,
+            avg_score=sum(r.score for r in all_results) / len(all_results) if all_results else 0,
+            avg_latency_ms=sum(r.latency_ms for r in all_results) / len(all_results) if all_results else 0,
+            evolution=total_evolution,
+            questions=all_results,
         )
         
-        naive_results = None
-        if compare_naive and naive_sample_results:
-            naive_total_q = sum(s.num_questions for s in naive_sample_results)
-            naive_total_correct = sum(s.num_correct for s in naive_sample_results)
-            naive_all_latencies = [q.latency_ms for s in naive_sample_results for q in s.questions]
-            
-            naive_results = BenchmarkResults(
-                split=split,
-                total_samples=len(naive_sample_results),
-                total_questions=naive_total_q,
-                total_correct=naive_total_correct,
-                accuracy=naive_total_correct / naive_total_q if naive_total_q else 0,
-                avg_latency_ms=sum(naive_all_latencies) / len(naive_all_latencies) if naive_all_latencies else 0,
-                total_ingestion_time_s=sum(s.ingestion_time_s for s in naive_sample_results),
-                avg_entities_per_sample=0,
-                avg_relationships_per_sample=0,
-                samples=naive_sample_results,
-            )
-        
-        # Print comparison
-        self._print_results(split, gm_results, naive_results)
-        
-        return gm_results, naive_results
+        self._print_split_results(result)
+        return result
     
-    def _print_results(self, split: str, gm: BenchmarkResults, naive: Optional[BenchmarkResults]):
-        """Print comparison results."""
+    def _print_split_results(self, result: SplitResult):
+        """Print results for a split."""
         print(f"\n{'='*80}")
-        print(f"📊 RESULTS: {split}")
+        print(f"📊 RESULTS: {result.split}")
         print(f"{'='*80}")
         
-        print(f"\n{'Metric':<30} {'GraphMem':>20}", end="")
-        if naive:
-            print(f" {'NaiveRAG':>20}")
-        else:
-            print()
+        print(f"\n🎯 ACCURACY")
+        print(f"   Correct: {result.correct}/{result.total_questions} ({result.accuracy:.1%})")
+        print(f"   Avg Score: {result.avg_score:.2f}")
+        print(f"   Avg Latency: {result.avg_latency_ms:.0f}ms")
         
-        print("-" * 70)
+        print(f"\n🧠 MEMORY EVOLUTION")
+        e = result.evolution
+        print(f"   Entities: {e.nodes_before} → {e.nodes_after}")
+        print(f"   Relationships: {e.relationships_before} → {e.relationships_after}")
+        print(f"   Clusters: {e.clusters_formed}")
+        print(f"   Time: {e.evolution_time_s:.1f}s")
         
-        print(f"{'Accuracy':<30} {gm.accuracy:>19.1%}", end="")
-        if naive:
-            print(f" {naive.accuracy:>19.1%}")
-        else:
-            print()
+        # Deduplication ratio
+        if e.nodes_before > 0:
+            dedup = 1 - (e.nodes_after / e.nodes_before)
+            print(f"   Deduplication: {dedup:.1%} reduction")
         
-        print(f"{'Correct / Total':<30} {f'{gm.total_correct}/{gm.total_questions}':>20}", end="")
-        if naive:
-            print(f" {f'{naive.total_correct}/{naive.total_questions}':>20}")
-        else:
-            print()
-        
-        print(f"{'Avg Latency (ms)':<30} {gm.avg_latency_ms:>20.0f}", end="")
-        if naive:
-            print(f" {naive.avg_latency_ms:>20.0f}")
-        else:
-            print()
-        
-        print(f"{'Total Ingestion Time (s)':<30} {gm.total_ingestion_time_s:>20.1f}", end="")
-        if naive:
-            print(f" {naive.total_ingestion_time_s:>20.1f}")
-        else:
-            print()
-        
-        print(f"{'Avg Entities/Sample':<30} {gm.avg_entities_per_sample:>20.0f}")
-        print(f"{'Avg Relationships/Sample':<30} {gm.avg_relationships_per_sample:>20.0f}")
-        
-        # Winner
-        print(f"\n{'='*80}")
-        if naive:
-            if gm.accuracy > naive.accuracy:
-                improvement = ((gm.accuracy - naive.accuracy) / naive.accuracy * 100) if naive.accuracy > 0 else 0
-                print(f"🏆 GraphMem wins with {improvement:.1f}% higher accuracy!")
-            elif naive.accuracy > gm.accuracy:
-                improvement = ((naive.accuracy - gm.accuracy) / gm.accuracy * 100) if gm.accuracy > 0 else 0
-                print(f"📚 NaiveRAG wins with {improvement:.1f}% higher accuracy")
-            else:
-                print("🤝 It's a tie!")
         print(f"{'='*80}")
     
-    def run_all_splits(
-        self,
-        max_samples: int = 2,
-        max_questions: int = 10,
-        compare_naive: bool = True,
-    ):
-        """Run evaluation on all splits."""
+    def run_all(self, max_samples: int = 2, max_questions: int = 10) -> Dict[str, SplitResult]:
+        """Run all splits."""
         if self.dataset is None:
             self._load_dataset()
         
-        all_gm_results = {}
-        all_naive_results = {}
-        
+        results = {}
         for split in self.SPLITS:
             if split in self.dataset:
-                gm, naive = self.run_split(
-                    split=split,
-                    max_samples=max_samples,
-                    max_questions=max_questions,
-                    compare_naive=compare_naive,
-                )
-                all_gm_results[split] = gm
-                if naive:
-                    all_naive_results[split] = naive
+                results[split] = self.run_split(split, max_samples, max_questions)
         
         # Overall summary
-        self._print_overall_summary(all_gm_results, all_naive_results)
-        
-        return all_gm_results, all_naive_results
+        self._print_overall(results)
+        return results
     
-    def _print_overall_summary(self, gm_results: Dict, naive_results: Dict):
-        """Print overall summary across all splits."""
+    def _print_overall(self, results: Dict[str, SplitResult]):
+        """Print overall summary."""
         print(f"\n{'='*80}")
         print("📊 OVERALL SUMMARY: MemoryAgentBench")
         print(f"{'='*80}")
         
-        print(f"\n{'Split':<30} {'GraphMem':>15} {'NaiveRAG':>15} {'Winner':>15}")
-        print("-" * 75)
+        print(f"\n{'Split':<30} {'Accuracy':>15} {'Avg Score':>15}")
+        print("-" * 60)
         
-        gm_total_correct = 0
-        gm_total_questions = 0
-        naive_total_correct = 0
-        naive_total_questions = 0
+        total_correct = 0
+        total_questions = 0
         
-        for split in self.SPLITS:
-            if split in gm_results:
-                gm = gm_results[split]
-                gm_acc = f"{gm.accuracy:.1%}"
-                gm_total_correct += gm.total_correct
-                gm_total_questions += gm.total_questions
-                
-                if split in naive_results:
-                    naive = naive_results[split]
-                    naive_acc = f"{naive.accuracy:.1%}"
-                    naive_total_correct += naive.total_correct
-                    naive_total_questions += naive.total_questions
-                    
-                    if gm.accuracy > naive.accuracy:
-                        winner = "GraphMem 🏆"
-                    elif naive.accuracy > gm.accuracy:
-                        winner = "NaiveRAG"
-                    else:
-                        winner = "Tie"
-                else:
-                    naive_acc = "-"
-                    winner = "-"
-                
-                print(f"{split:<30} {gm_acc:>15} {naive_acc:>15} {winner:>15}")
+        for split, r in results.items():
+            print(f"{split:<30} {r.accuracy:>14.1%} {r.avg_score:>15.2f}")
+            total_correct += r.correct
+            total_questions += r.total_questions
         
-        print("-" * 75)
-        
-        gm_overall = gm_total_correct / gm_total_questions if gm_total_questions else 0
-        naive_overall = naive_total_correct / naive_total_questions if naive_total_questions else 0
-        
-        print(f"{'OVERALL':<30} {gm_overall:>14.1%} {naive_overall:>14.1%}", end="")
-        if gm_overall > naive_overall:
-            print(f" {'GraphMem 🏆':>15}")
-        elif naive_overall > gm_overall:
-            print(f" {'NaiveRAG':>15}")
-        else:
-            print(f" {'Tie':>15}")
-        
+        print("-" * 60)
+        overall_acc = total_correct / total_questions if total_questions else 0
+        print(f"{'OVERALL':<30} {overall_acc:>14.1%}")
         print(f"{'='*80}")
 
 
@@ -752,24 +764,19 @@ class MemoryAgentBenchEvaluator:
 # MAIN
 # ============================================================================
 def main():
-    parser = argparse.ArgumentParser(description="MemoryAgentBench Evaluation for GraphMem")
+    parser = argparse.ArgumentParser(description="MemoryAgentBench Evaluation")
     
-    # Provider settings
-    parser.add_argument("--provider", default="azure", help="LLM provider")
-    parser.add_argument("--api-key", required=True, help="API key")
-    parser.add_argument("--azure-endpoint", help="Azure OpenAI endpoint")
-    parser.add_argument("--azure-deployment", default="gpt-4.1-mini", help="Azure LLM deployment")
-    parser.add_argument("--azure-embedding-deployment", default="text-embedding-3-small", help="Azure embedding deployment")
+    parser.add_argument("--provider", default="azure")
+    parser.add_argument("--api-key", required=True)
+    parser.add_argument("--azure-endpoint", help="Azure endpoint")
+    parser.add_argument("--azure-deployment", default="gpt-4.1-mini")
+    parser.add_argument("--azure-embedding-deployment", default="text-embedding-3-small")
     
-    # Evaluation settings
-    parser.add_argument("--split", default=None, help="Specific split to run (or 'all')")
-    parser.add_argument("--max-samples", type=int, default=2, help="Max samples per split")
-    parser.add_argument("--max-questions", type=int, default=10, help="Max questions per sample")
-    parser.add_argument("--no-naive", action="store_true", help="Skip NaiveRAG comparison")
-    
-    # Options
-    parser.add_argument("--debug", action="store_true", help="Enable debug logging")
-    parser.add_argument("--turso-db", default="memory_bench.db", help="Turso database path")
+    parser.add_argument("--split", default="all", help="Split to run or 'all'")
+    parser.add_argument("--max-samples", type=int, default=2)
+    parser.add_argument("--max-questions", type=int, default=10)
+    parser.add_argument("--debug", action="store_true")
+    parser.add_argument("--turso-db", default="memory_bench.db")
     
     args = parser.parse_args()
     
@@ -785,21 +792,11 @@ def main():
         debug=args.debug,
     )
     
-    if args.split and args.split != "all":
-        evaluator.run_split(
-            split=args.split,
-            max_samples=args.max_samples,
-            max_questions=args.max_questions,
-            compare_naive=not args.no_naive,
-        )
+    if args.split == "all":
+        evaluator.run_all(args.max_samples, args.max_questions)
     else:
-        evaluator.run_all_splits(
-            max_samples=args.max_samples,
-            max_questions=args.max_questions,
-            compare_naive=not args.no_naive,
-        )
+        evaluator.run_split(args.split, args.max_samples, args.max_questions)
 
 
 if __name__ == "__main__":
     main()
-
