@@ -373,6 +373,13 @@ RELEVANT ENTITIES:"""
                 # Skip already collected edges
                 if edge.id in collected_edge_ids:
                     continue
+                
+                # IMPORTANCE FILTERING: Skip decayed/superseded edges
+                from graphmem.core.memory_types import MemoryImportance, MemoryState
+                if edge.importance == MemoryImportance.EPHEMERAL:
+                    continue  # Decayed edge - superseded by newer information
+                if edge.state == MemoryState.ARCHIVED or edge.state == MemoryState.DELETED:
+                    continue  # Archived/deleted - skip
                     
                 # Check if edge connects to current frontier
                 if edge.source_id in current_frontier or edge.target_id in current_frontier:

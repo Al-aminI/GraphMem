@@ -139,8 +139,8 @@ class MemoryDecay:
                 "edge": edge,
             })
         
-        if len(all_edges) < 5:
-            return events  # Need enough edges to find conflicts
+        if len(all_edges) < 2:
+            return events  # Need at least 2 edges to find conflicts
         
         # Group edges by source + relation type to find conflicts
         from collections import defaultdict
@@ -150,13 +150,64 @@ class MemoryDecay:
             edge_groups[key].append(edge_info)
         
         # Find groups with potential conflicts (same source+relation, different targets)
+        # PRIORITY-BASED CONFLICT RESOLUTION: Lower priority edges should decay
         conflict_candidates = []
+        priority_based_decays = []
+        
         for key, edges in edge_groups.items():
             if len(edges) > 1:
                 # Multiple targets for same source+relation = potential conflict
                 targets = set(e['target'].lower() for e in edges)
                 if len(targets) > 1:
-                    conflict_candidates.extend(edges)
+                    # PRIORITY RESOLUTION: Sort by priority, decay all but highest
+                    sorted_edges = sorted(
+                        edges, 
+                        key=lambda e: e['edge'].properties.get('priority', 0),
+                        reverse=True
+                    )
+                    
+                    # Keep highest priority, mark others for decay
+                    if len(sorted_edges) > 1:
+                        highest = sorted_edges[0]
+                        highest_priority = highest['edge'].properties.get('priority', 0)
+                        
+                        for lower_edge in sorted_edges[1:]:
+                            lower_priority = lower_edge['edge'].properties.get('priority', 0)
+                            if lower_priority < highest_priority:
+                                logger.info(
+                                    f"🔄 Priority decay: {lower_edge['description']} "
+                                    f"(priority={lower_priority}) superseded by "
+                                    f"{highest['description']} (priority={highest_priority})"
+                                )
+                                priority_based_decays.append(lower_edge)
+                            else:
+                                # Same priority - send to LLM for resolution
+                                conflict_candidates.append(lower_edge)
+                        
+                        conflict_candidates.append(highest)  # Include for context
+        
+        # Add priority-based decays as events - LOWER IMPORTANCE instead of deleting
+        from graphmem.core.memory_types import MemoryImportance, MemoryState
+        
+        for decay_edge in priority_based_decays:
+            edge = decay_edge['edge']
+            old_importance = edge.importance
+            
+            # Lower importance to EPHEMERAL (will be filtered in retrieval)
+            if edge.id in memory.edges:
+                memory.edges[edge.id] = edge.evolve(
+                    importance=MemoryImportance.EPHEMERAL,
+                    state=MemoryState.ARCHIVED,  # Mark as archived, not deleted
+                )
+            
+            events.append(EvolutionEvent(
+                evolution_type=EvolutionType.DECAY,
+                memory_id=memory.id,
+                affected_edges=[edge.id],
+                before_state={"importance": old_importance.name},
+                after_state={"importance": "EPHEMERAL", "state": "ARCHIVED"},
+                reason=f"Superseded by higher-priority fact (conflict resolution)",
+            ))
         
         # If no conflict candidates, fall back to temporal analysis
         temporal_edges = [e for e in all_edges if e['valid_from'] != 'unknown' or e['valid_until'] != 'present']

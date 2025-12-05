@@ -210,6 +210,12 @@ class KnowledgeGraph:
         if not content or not content.strip():
             return [], []
         
+        # FACT ORDER TRACKING: Parse from ORIGINAL content before chunking
+        # This preserves newlines for proper fact number detection
+        fact_priorities = self._parse_fact_order(content)
+        if fact_priorities:
+            logger.info(f"📊 Global fact priorities: {dict(list(fact_priorities.items())[:10])}")
+        
         # Split into chunks
         chunks = self._split_into_chunks(content)
         logger.info(f"Split content into {len(chunks)} chunks")
@@ -224,7 +230,7 @@ class KnowledgeGraph:
         if len(chunks) == 1:
             # Single chunk - process directly
             entities, relationships = self._extract_from_chunk(
-                chunks[0], metadata, memory_id, user_id
+                chunks[0], metadata, memory_id, user_id, fact_priorities
             )
             all_entities.extend(entities)
             all_relationships.extend(relationships)
@@ -234,7 +240,7 @@ class KnowledgeGraph:
             with ThreadPoolExecutor(max_workers=self.config.max_workers) as executor:
                 futures = {
                     executor.submit(
-                        self._extract_from_chunk, chunk, metadata, memory_id, user_id
+                        self._extract_from_chunk, chunk, metadata, memory_id, user_id, fact_priorities
                     ): i
                     for i, chunk in enumerate(chunks)
                 }
@@ -328,8 +334,14 @@ class KnowledgeGraph:
         metadata: Dict[str, Any],
         memory_id: str,
         user_id: str = "default",
+        fact_priorities: Dict[str, int] = None,  # GLOBAL priorities from original content
     ) -> Tuple[List[MemoryNode], List[MemoryEdge]]:
         """Extract entities and relationships from a single chunk."""
+        
+        # Use global fact_priorities if provided, else parse from chunk (fallback)
+        if fact_priorities is None:
+            fact_priorities = self._parse_fact_order(chunk)
+        
         prompt = EXTRACTION_PROMPT.format(
             max_triplets=self.config.max_triplets_per_chunk,
             text=chunk,
@@ -390,6 +402,21 @@ class KnowledgeGraph:
                 valid_from_dt = self._parse_temporal_to_datetime(valid_from)
                 valid_until_dt = self._parse_temporal_to_datetime(valid_until)
                 
+                # Get priority from fact order (higher = newer, should override)
+                priority = self._get_fact_priority(source, target, fact_priorities)
+                logger.debug(f"📊 Edge priority: {source} -> {target} = {priority}")
+                
+                # Map priority to importance: Higher fact number = higher importance
+                from graphmem.core.memory_types import MemoryImportance
+                if priority >= 100:
+                    edge_importance = MemoryImportance.CRITICAL
+                elif priority >= 50:
+                    edge_importance = MemoryImportance.VERY_HIGH
+                elif priority >= 20:
+                    edge_importance = MemoryImportance.HIGH
+                else:
+                    edge_importance = MemoryImportance.MEDIUM
+                
                 edge = MemoryEdge(
                     id="",  # Will be generated
                     source_id=source,  # Will be resolved to canonical
@@ -398,7 +425,12 @@ class KnowledgeGraph:
                     description=description,
                     valid_from=valid_from_dt,
                     valid_until=valid_until_dt,
-                    properties={**metadata, "temporal_raw": {"from": valid_from, "until": valid_until}},
+                    importance=edge_importance,  # PRIORITY-BASED IMPORTANCE
+                    properties={
+                        **metadata,
+                        "temporal_raw": {"from": valid_from, "until": valid_until},
+                        "priority": priority,  # Higher = newer info, overrides conflicts
+                    },
                     memory_id=memory_id,
                 )
                 edges.append(edge)
@@ -411,6 +443,71 @@ class KnowledgeGraph:
                 # Retry with simpler prompt
                 return self._extract_fallback(chunk, metadata, memory_id, user_id)
             return [], []
+    
+    def _parse_fact_order(self, chunk: str) -> Dict[str, int]:
+        """
+        Parse fact numbers from numbered lists like:
+        "43. Christianity was founded in Taipei"
+        
+        Returns dict mapping entity names to their fact number (priority).
+        Higher number = newer information = should override.
+        """
+        fact_priorities = {}
+        
+        # Pattern: "123. Entity name..." or "123: Entity name..."
+        for match in re.finditer(r'^(\d+)[.\s:]+(.+)$', chunk, re.MULTILINE):
+            fact_num = int(match.group(1))
+            fact_text = match.group(2).strip()
+            
+            # Extract individual capitalized entities (proper nouns)
+            # Pattern: One or more capitalized words (entity names)
+            for entity_match in re.finditer(r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\b', fact_text):
+                entity = entity_match.group(1).strip()
+                if len(entity) > 2 and entity.lower() not in ['the', 'and', 'for']:
+                    # Update only if this is a higher fact number
+                    existing = fact_priorities.get(entity.lower(), 0)
+                    fact_priorities[entity.lower()] = max(existing, fact_num)
+        
+        return fact_priorities
+    
+    def _get_fact_priority(
+        self,
+        source: str,
+        target: str,
+        fact_priorities: Dict[str, int],
+    ) -> int:
+        """
+        Get priority for an edge based on fact order.
+        Higher priority = newer information = overrides conflicts.
+        
+        STRATEGY: Use TARGET entity's priority since it's more specific.
+        E.g., "Christianity → founded_in → Taipei" uses Taipei's priority (43)
+              "Christianity → founded_in → Jerusalem" uses Jerusalem's priority (40)
+        """
+        target_lower = target.lower()
+        
+        # Direct match for target
+        target_priority = fact_priorities.get(target_lower, 0)
+        
+        # Partial match for target
+        for entity, priority in fact_priorities.items():
+            if entity in target_lower or target_lower in entity:
+                if priority > target_priority:
+                    target_priority = priority
+        
+        # If target has priority, use it (more specific)
+        if target_priority > 0:
+            return target_priority
+        
+        # Fallback to source priority
+        source_lower = source.lower()
+        source_priority = fact_priorities.get(source_lower, 0)
+        for entity, priority in fact_priorities.items():
+            if entity in source_lower or source_lower in entity:
+                if priority > source_priority:
+                    source_priority = priority
+        
+        return source_priority
     
     def _extract_fallback(
         self,
