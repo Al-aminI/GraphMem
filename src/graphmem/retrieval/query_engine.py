@@ -119,18 +119,18 @@ class QueryEngine:
             all_nodes = list(memory.nodes.values()) if memory.nodes else nodes
             all_edges = list(memory.edges.values()) if memory.edges else edges
             
-            community_answers = self._query_communities(
-                query=query.query,
-                clusters=clusters,
+        community_answers = self._query_communities(
+            query=query.query,
+            clusters=clusters,
                 nodes=all_nodes,
                 edges=all_edges,
-            )
-            
-            if community_answers:
+        )
+        
+        if community_answers:
                 community_answer, community_confidence = self._aggregate_answers(
-                    query=query.query,
-                    answers=community_answers,
-                )
+                query=query.query,
+                answers=community_answers,
+            )
                 # Use community answer if better than direct
                 if community_confidence > confidence:
                     answer = community_answer

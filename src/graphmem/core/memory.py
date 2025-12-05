@@ -734,8 +734,41 @@ class GraphMem:
         elif max_workers is None:
             max_workers = 10 if aggressive else 5
         
+        # Validate and filter documents - skip invalid entries (None, ellipsis, non-dict)
+        valid_documents = []
+        skipped = 0
+        for i, doc in enumerate(documents):
+            if doc is None or doc is ... or not isinstance(doc, dict):
+                logger.warning(f"   ⚠️ Skipping invalid document at index {i}: {type(doc).__name__}")
+                skipped += 1
+                continue
+            # Also check for empty content
+            content = doc.get("content", doc.get("text", ""))
+            if not content or not isinstance(content, str) or not content.strip():
+                logger.warning(f"   ⚠️ Skipping document at index {i}: empty or invalid content")
+                skipped += 1
+                continue
+            valid_documents.append(doc)
+        
+        if skipped > 0:
+            logger.info(f"   📋 Filtered {skipped} invalid documents, processing {len(valid_documents)}")
+        
+        if not valid_documents:
+            logger.warning("   ❌ No valid documents to ingest!")
+            return {
+                "success": False,
+                "documents_processed": 0,
+                "documents_failed": 0,
+                "documents_skipped": skipped,
+                "total_entities": 0,
+                "total_relationships": 0,
+                "clusters_built": 0,
+                "elapsed_seconds": 0,
+                "throughput_docs_per_sec": 0,
+            }
+        
         if show_progress:
-            logger.info(f"🚀 Batch ingesting {len(documents)} documents with {max_workers} workers")
+            logger.info(f"🚀 Batch ingesting {len(valid_documents)} documents with {max_workers} workers")
         
         # Thread-safe counters
         results_lock = threading.Lock()
@@ -752,6 +785,12 @@ class GraphMem:
             - Infinite retry on rate limits
             """
             nonlocal processed, failed, total_entities, total_relationships
+            
+            # Defensive check (already validated, but just in case)
+            if not isinstance(doc, dict):
+                with results_lock:
+                    failed += 1
+                return {"success": False, "doc_id": "invalid", "error": f"Invalid document type: {type(doc).__name__}", "nodes": [], "edges": []}
             
             doc_id = doc.get("id", "unknown")
             content = doc.get("content", doc.get("text", ""))
@@ -804,10 +843,10 @@ class GraphMem:
                     logger.warning(f"   ⚠️ Failed to ingest {doc_id}: {str(e)[:160]}")
                     return {"success": False, "doc_id": doc_id, "error": str(e), "nodes": [], "edges": []}
         
-        # Process documents in parallel
+        # Process documents in parallel (using validated documents)
         results = []
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {executor.submit(ingest_single, doc): i for i, doc in enumerate(documents)}
+            futures = {executor.submit(ingest_single, doc): i for i, doc in enumerate(valid_documents)}
             
             for future in as_completed(futures):
                 idx = futures[future]
@@ -818,7 +857,7 @@ class GraphMem:
                     if show_progress and len(results) % 10 == 0:
                         elapsed = time.time() - start_time
                         rate = len(results) / elapsed if elapsed > 0 else 0
-                        logger.info(f"   Progress: {len(results)}/{len(documents)} ({rate:.1f} docs/sec)")
+                        logger.info(f"   Progress: {len(results)}/{len(valid_documents)} ({rate:.1f} docs/sec)")
                         
                 except Exception as e:
                     logger.error(f"   Document {idx} failed: {e}")
@@ -865,19 +904,21 @@ class GraphMem:
                 self._metrics["total_clusters"] = len(self._memory.clusters)
         
         elapsed = time.time() - start_time
-        throughput = len(documents) / elapsed if elapsed > 0 else 0
+        throughput = len(valid_documents) / elapsed if elapsed > 0 else 0
         
         if show_progress:
-            logger.info(f"✅ Batch complete: {processed} processed, {failed} failed in {elapsed:.1f}s ({throughput:.1f} docs/sec)")
+            skip_info = f", {skipped} skipped" if skipped > 0 else ""
+            logger.info(f"✅ Batch complete: {processed} processed, {failed} failed{skip_info} in {elapsed:.1f}s ({throughput:.1f} docs/sec)")
         
         # Auto-evolve if enabled
         if self.auto_evolve and processed > 0:
             self.evolve()
         
         return {
-            "success": failed == 0,
+            "success": failed == 0 and processed > 0,
             "documents_processed": processed,
             "documents_failed": failed,
+            "documents_skipped": skipped,
             "total_entities": total_entities,
             "total_relationships": total_relationships,
             "clusters_built": len(clusters),
