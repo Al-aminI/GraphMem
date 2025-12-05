@@ -295,17 +295,25 @@ Synthesized Answer:"""
         """Generate answer directly from context."""
         prompt = f"""You are answering questions based on a knowledge graph memory system.
 
-CONTEXT (contains entities, relationships, and topic summaries):
+CONTEXT (contains entities, relationships, temporal info, and topic summaries):
 {context}
 
 QUESTION: {query}
 
-INSTRUCTIONS:
-1. Carefully analyze ALL entities, relationships, and topic summaries provided
-2. Consider ALL relevant information, not just the first match
-3. If multiple entities or facts are relevant, include them ALL in your answer
-4. Synthesize information from different parts of the context
-5. Be comprehensive but concise
+CRITICAL INSTRUCTIONS:
+1. **ALIASES**: Entities may have multiple names (e.g., "Alexander Chen" = "Dr. Chen" = "The Quantum Pioneer"). 
+   If the question uses any alias, find the matching entity by ANY of its names.
+   
+2. **TEMPORAL VALIDITY**: Relationships have time periods (valid_from → valid_until).
+   - If asked "WHO IS current X" → find relationship with valid_until = present/None
+   - If asked "WHO WAS X in YEAR" → find relationship where YEAR is between valid_from and valid_until
+   - "Present" or no valid_until means the relationship is CURRENT
+   
+3. **EXHAUSTIVE SEARCH**: Check ALL entities and relationships, not just the first match.
+
+4. **SYNTHESIZE**: Combine information from multiple sources if relevant.
+
+5. **BE SPECIFIC**: If you find temporal info, include it (e.g., "X was CEO from 2015 to 2018").
 
 Answer:"""
         
@@ -317,18 +325,34 @@ Answer:"""
             return "Unable to generate answer.", 0.0
     
     def _format_entities(self, nodes: List[MemoryNode]) -> str:
-        """Format entities for prompt."""
+        """Format entities for prompt, including aliases."""
         lines = []
-        for node in nodes[:10]:
+        for node in nodes[:15]:  # Show more entities
             desc = node.description or "No description"
-            lines.append(f"- {node.name} ({node.entity_type}): {desc[:200]}")
+            # Include aliases if available
+            aliases_str = ""
+            if hasattr(node, 'aliases') and node.aliases:
+                other_aliases = [a for a in node.aliases if a != node.name]
+                if other_aliases:
+                    aliases_str = f" [also known as: {', '.join(other_aliases[:5])}]"
+            lines.append(f"- {node.name} ({node.entity_type}){aliases_str}: {desc[:200]}")
         return "\n".join(lines) if lines else "No entity details available."
     
     def _format_relationships(self, edges: List[MemoryEdge]) -> str:
-        """Format relationships for prompt."""
+        """Format relationships for prompt, including temporal validity."""
         lines = []
-        for edge in edges[:10]:
-            lines.append(f"- {edge.source_id} --[{edge.relation_type}]--> {edge.target_id}")
+        for edge in edges[:15]:  # Show more relationships
+            # Include temporal validity if available
+            temporal_str = ""
+            if hasattr(edge, 'valid_from') and edge.valid_from:
+                from_str = edge.valid_from.strftime("%Y") if isinstance(edge.valid_from, datetime) else str(edge.valid_from)
+                if hasattr(edge, 'valid_until') and edge.valid_until:
+                    until_str = edge.valid_until.strftime("%Y") if isinstance(edge.valid_until, datetime) else str(edge.valid_until)
+                else:
+                    until_str = "present"
+                temporal_str = f" [{from_str} → {until_str}]"
+            
+            lines.append(f"- {edge.source_id} --[{edge.relation_type}]--> {edge.target_id}{temporal_str}")
         return "\n".join(lines) if lines else "No relationships available."
     
     def _parse_answer_response(self, response: str) -> Optional[Dict[str, Any]]:

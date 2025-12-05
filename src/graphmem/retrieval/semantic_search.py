@@ -178,9 +178,13 @@ class SemanticSearch:
             except Exception as e:
                 logger.warning(f"Neo4j vector search failed, falling back to in-memory: {e}")
         
-        # Fallback: In-memory search
+        # Fallback: In-memory search with HYBRID ALIAS MATCHING
         if not self._index:
             return []
+        
+        # Pre-process query for alias matching
+        query_lower = query.lower()
+        query_words = set(query_lower.split())
         
         # Calculate similarities with importance weighting
         # This is where evolution features (decay, consolidation) actually matter!
@@ -188,8 +192,35 @@ class SemanticSearch:
         for node_id, node_vector in self._index.items():
             similarity = self._cosine_similarity(query_vector, node_vector)
             
-            if similarity >= min_similarity:
-                node = self._node_lookup.get(node_id)
+            # CRITICAL: Also check for ALIAS MATCHES (hybrid search)
+            # This catches queries like "What did Dr. Chen do?" when node has alias "Dr. Chen"
+            alias_boost = 0.0
+            node = self._node_lookup.get(node_id)
+            if node and hasattr(node, 'aliases') and node.aliases:
+                for alias in node.aliases:
+                    alias_lower = alias.lower()
+                    # Exact alias match in query
+                    if alias_lower in query_lower:
+                        alias_boost = max(alias_boost, 0.3)  # Strong boost
+                        logger.debug(f"Alias match: '{alias}' in query '{query[:50]}'")
+                        break
+                    # Partial word match
+                    alias_words = set(alias_lower.split())
+                    if alias_words & query_words:
+                        alias_boost = max(alias_boost, 0.15)  # Medium boost
+                
+                # Also check canonical name
+                if node.canonical_name and node.canonical_name.lower() in query_lower:
+                    alias_boost = max(alias_boost, 0.25)
+                
+                # Also check node name
+                if node.name.lower() in query_lower:
+                    alias_boost = max(alias_boost, 0.25)
+            
+            # Adjust effective similarity with alias boost
+            effective_similarity = min(1.0, similarity + alias_boost)
+            
+            if effective_similarity >= min_similarity:
                 if node:
                     # Apply filters
                     if filters and not self._matches_filters(node, filters):
@@ -215,10 +246,11 @@ class SemanticSearch:
                     # Access count boost - frequently accessed nodes matter more
                     access_boost = min(0.1, node.access_count * 0.01)  # Up to 10% boost
                     
-                    # Combined score: 60% similarity + 25% importance + 10% recency + 5% access
+                    # Combined score: 50% similarity + 25% importance + 15% alias + 5% recency + 5% access
                     combined_score = (
-                        0.60 * similarity + 
+                        0.50 * similarity + 
                         0.25 * importance_weight + 
+                        0.15 * (alias_boost * 3.33) +  # Normalize alias boost to 0-0.5 range
                         recency_boost + 
                         access_boost
                     )

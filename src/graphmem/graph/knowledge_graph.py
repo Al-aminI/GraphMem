@@ -20,62 +20,49 @@ logger = logging.getLogger(__name__)
 
 # State-of-the-art extraction prompt with ALIASES and TEMPORAL VALIDITY
 EXTRACTION_PROMPT = """
--Goal-
-Extract ALL entities and relationships from this text, including:
-- Entity ALIASES (nicknames, abbreviations, titles, alternative names)
-- TEMPORAL information (when relationships started/ended)
-Target at least {max_triplets} triplets but extract MORE if available.
+You are an expert knowledge graph extractor. Extract ALL entities and relationships.
 
--Entity Types-
-• PERSON: Names, titles, roles
-• ORGANIZATION: Companies, institutions, groups
-• PRODUCT: Products, services, technologies
-• LOCATION: Cities, countries, addresses
-• DATE/TIME: Years, dates, time periods
-• CONCEPT: Ideas, missions, goals
-• EVENT: Milestones, announcements
+## CRITICAL RULES
 
--CRITICAL: Extract ALIASES-
-For each entity, identify ALL alternative names, including:
-• Nicknames: "The Iron Man of Tech", "The Quantum Pioneer"
-• Titles: "Dr.", "Professor", "CEO"
-• Abbreviations: "Dr. Chen", "A. Chen", initials
-• Formal/informal: "Alexander Chen" vs "Alex"
-• "Also known as", "nicknamed", "formerly known as"
+1. **ALIASES ARE MANDATORY**: When someone is called by MULTIPLE names in the text, you MUST list ALL names as aliases.
+   - If text says "Dr. Alexander Chen, also known as 'The Quantum Pioneer'" 
+   - Extract: name="Alexander Chen", aliases="Dr. Alexander Chen, Dr. Chen, The Quantum Pioneer, Alex Chen"
+   - INCLUDE the full name AND all variations mentioned or implied
 
--Relationship Types with TEMPORAL VALIDITY-
-For relationships that change over time, include:
-• valid_from: When did this relationship START? (ISO date or year)
-• valid_until: When did it END? (ISO date, year, or "present" if ongoing)
+2. **TEMPORAL VALIDITY**: For relationships that can change over time (CEO, employee, etc.), extract dates.
+   - If text says "was CEO from 2015 to 2018" → valid_from=2015, valid_until=2018
+   - If text says "is the current CEO since 2023" → valid_from=2023, valid_until=present
 
-Examples of temporal relationships:
-• CEO tenure: "was CEO from 2015 to 2020"
-• Employment: "worked at X from 2010"
-• Previous roles: "former CEO", "ex-employee"
+## FORMAT
 
--Format-
-Entity with aliases:
-("entity"$$$$<name>$$$$<type>$$$$<description>$$$$<aliases comma-separated>)
+Entity: ("entity"$$$$<CANONICAL_NAME>$$$$<TYPE>$$$$<DESCRIPTION>$$$$<ALL_ALIASES_COMMA_SEPARATED>)
+Relationship: ("relationship"$$$$<SOURCE>$$$$<TARGET>$$$$<RELATION>$$$$<DESC>$$$$<VALID_FROM>$$$$<VALID_UNTIL>)
 
-Relationship with temporal validity:
-("relationship"$$$$<source>$$$$<target>$$$$<relation>$$$$<description>$$$$<valid_from>$$$$<valid_until>)
+## EXAMPLES
 
-Use "none" for aliases if no aliases found.
-Use "none" for valid_from/valid_until if not temporal.
+Text: "Dr. Alexander Chen, nicknamed 'The Quantum Pioneer', founded Quantum AI Labs in 2015."
 
--Examples-
-("entity"$$$$Alexander Chen$$$$Person$$$$Quantum computing researcher and CEO$$$$Dr. Chen, Alex Chen, A. Chen, The Quantum Pioneer, Professor Chen)
-("entity"$$$$Tesla, Inc.$$$$Organization$$$$Electric vehicle company$$$$Tesla, Tesla Motors)
-("entity"$$$$Elon Musk$$$$Person$$$$CEO of Tesla and SpaceX founder$$$$Musk, The Iron Man of Tech)
+Output:
+("entity"$$$$Alexander Chen$$$$Person$$$$Quantum computing researcher who founded Quantum AI Labs$$$$Dr. Alexander Chen, Dr. Chen, Alex Chen, The Quantum Pioneer, Professor Chen)
+("entity"$$$$Quantum AI Labs$$$$Organization$$$$Research laboratory founded in 2015$$$$none)
+("relationship"$$$$Alexander Chen$$$$Quantum AI Labs$$$$founded$$$$Founded the company in 2015$$$$2015$$$$present)
 
-("relationship"$$$$Elon Musk$$$$Tesla, Inc.$$$$is CEO of$$$$Current CEO since 2008$$$$2008$$$$present)
-("relationship"$$$$Sarah Williams$$$$NovaTech$$$$was CEO of$$$$Former CEO who stepped down$$$$2015$$$$2018)
-("relationship"$$$$Tesla, Inc.$$$$Model S$$$$produces$$$$Manufactures electric vehicle$$$$none$$$$none)
+Text: "John Smith was CEO of Acme Corp from 2010 to 2015. Jane Doe became CEO in 2015."
 
--Text-
+Output:
+("entity"$$$$John Smith$$$$Person$$$$Former CEO of Acme Corp$$$$none)
+("entity"$$$$Jane Doe$$$$Person$$$$Current CEO of Acme Corp$$$$none)
+("entity"$$$$Acme Corp$$$$Organization$$$$Company$$$$Acme, Acme Corporation)
+("relationship"$$$$John Smith$$$$Acme Corp$$$$was CEO of$$$$Served as CEO$$$$2010$$$$2015)
+("relationship"$$$$Jane Doe$$$$Acme Corp$$$$is CEO of$$$$Current CEO$$$$2015$$$$present)
+
+## YOUR TASK
+
+Extract from this text (target {max_triplets}+ triplets):
+
 {text}
 
--Output (extract ALL with aliases and temporal info)-
+## OUTPUT (entities first, then relationships)
 """
 
 

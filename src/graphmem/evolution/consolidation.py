@@ -175,8 +175,30 @@ class MemoryConsolidation:
         name_a = node_a.canonical_name or node_a.name
         name_b = node_b.canonical_name or node_b.name
         
-        # Check for alias overlap
+        # CRITICAL: Check for EXACT name match (case-insensitive)
+        if name_a.lower().strip() == name_b.lower().strip():
+            return True
+        
+        # Check if either name matches the other's canonical name
+        if node_a.name.lower().strip() == name_b.lower().strip():
+            return True
+        if node_b.name.lower().strip() == name_a.lower().strip():
+            return True
+        
+        # Check for alias overlap (any alias matches)
         if node_a.aliases & node_b.aliases:
+            return True
+        
+        # Check if any alias in A matches any name in B
+        aliases_a_lower = {a.lower().strip() for a in node_a.aliases}
+        aliases_b_lower = {b.lower().strip() for b in node_b.aliases}
+        if aliases_a_lower & aliases_b_lower:
+            return True
+        
+        # Check if name of one is in aliases of other
+        if name_a.lower().strip() in aliases_b_lower:
+            return True
+        if name_b.lower().strip() in aliases_a_lower:
             return True
         
         # Check name containment

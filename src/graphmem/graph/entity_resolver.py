@@ -149,7 +149,22 @@ class EntityResolver:
                 candidate = self._create_candidate(node)
                 key = self._generate_key(node.name)
                 local_index[key] = candidate
+                
+                # CRITICAL: Register ALL aliases from node.aliases + the name itself!
                 self._register_alias(node.name, key)
+                if hasattr(node, 'aliases') and node.aliases:
+                    for alias in node.aliases:
+                        self._register_alias(alias, key)
+                        # Also register in local alias map for current batch
+                        local_alias[alias.lower()] = key
+                        slug = re.sub(r'[^a-z0-9]', '', alias.lower())
+                        if slug:
+                            local_alias.setdefault(slug, key)
+                
+                # Collect all aliases for the node
+                all_aliases = {node.name}
+                if hasattr(node, 'aliases') and node.aliases:
+                    all_aliases.update(node.aliases)
                 
                 resolved_node = MemoryNode(
                     id=key,
@@ -157,11 +172,12 @@ class EntityResolver:
                     entity_type=node.entity_type,
                     description=node.description,
                     canonical_name=node.name,
-                    aliases={node.name},
+                    aliases=all_aliases,  # Include ALL LLM-extracted aliases!
                     embedding=node.embedding,  # Preserve embedding!
                     properties={
                         **node.properties,
                         "canonical_name": node.name,
+                        "aliases": list(all_aliases),
                     },
                     user_id=user_id,  # Multi-tenant isolation
                     memory_id=memory_id,
@@ -312,17 +328,33 @@ class EntityResolver:
     
     
     def _create_candidate(self, node: MemoryNode) -> EntityCandidate:
-        """Create an entity candidate from a node."""
+        """Create an entity candidate from a node, including LLM-extracted aliases."""
         cleaned_name = self._clean_name(node.name)
         embedding = self._get_embedding(node.description or cleaned_name)
+        
+        # CRITICAL: Include LLM-extracted aliases from node.aliases!
+        aliases = {node.name, cleaned_name}
+        if hasattr(node, 'aliases') and node.aliases:
+            aliases.update(node.aliases)
+        
+        # Also add all cleaned versions of aliases
+        for alias in list(aliases):
+            cleaned = self._clean_name(alias)
+            if cleaned:
+                aliases.add(cleaned)
+        
+        # Build tokens from all aliases
+        all_tokens = self._tokenize(cleaned_name)
+        for alias in aliases:
+            all_tokens.update(self._tokenize(alias))
         
         return EntityCandidate(
             name=node.name,
             entity_type=node.entity_type,
             description=node.description or "",
-            tokens=self._tokenize(cleaned_name),
+            tokens=all_tokens,
             embedding=embedding,
-            aliases={node.name, cleaned_name},
+            aliases=aliases,
             descriptions={node.description} if node.description else set(),
             occurrences=1,
             original_node=node,
@@ -333,15 +365,25 @@ class EntityResolver:
         canonical: EntityCandidate,
         new_node: MemoryNode,
     ) -> EntityCandidate:
-        """Merge a new node into an existing canonical entity."""
+        """Merge a new node into an existing canonical entity, including aliases."""
         cleaned_name = self._clean_name(new_node.name)
         
-        # Update aliases
+        # Update aliases from node name
         canonical.aliases.add(new_node.name)
         canonical.aliases.add(cleaned_name)
         
-        # Update tokens
+        # CRITICAL: Also merge LLM-extracted aliases from new_node.aliases!
+        if hasattr(new_node, 'aliases') and new_node.aliases:
+            for alias in new_node.aliases:
+                canonical.aliases.add(alias)
+                cleaned = self._clean_name(alias)
+                if cleaned:
+                    canonical.aliases.add(cleaned)
+        
+        # Update tokens from ALL aliases
         canonical.tokens.update(self._tokenize(cleaned_name))
+        for alias in canonical.aliases:
+            canonical.tokens.update(self._tokenize(alias))
         
         # Update descriptions
         if new_node.description:
