@@ -30,9 +30,15 @@ from typing import List, Dict, Any, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import numpy as np
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from threading import Lock
 
 # Add GraphMem to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+
+# Global settings for concurrency
+MAX_CONCURRENT_SAMPLES = 5  # Process multiple samples in parallel
+MAX_CONCURRENT_QUERIES = 10  # Process multiple queries in parallel
 
 logging.basicConfig(
     level=logging.INFO,
@@ -440,16 +446,55 @@ class AccurateRetrievalEvaluator:
     AR (Accurate Retrieval) Evaluator
     
     Tests: SH-QA, MH-QA, LME(S*), EventQA
+    
+    Uses concurrent query processing for faster evaluation.
     """
     
-    def __init__(self, agent: GraphMemAgent, max_samples: int = 100):
+    def __init__(self, agent: GraphMemAgent, max_samples: int = 100, max_workers: int = 10):
         self.agent = agent
         self.max_samples = max_samples
+        self.max_workers = max_workers
         self.result = CompetencyResult("AR")
+        self._lock = Lock()
+    
+    def _evaluate_query(self, question: str, expected: Any) -> TaskResult:
+        """Evaluate a single query (thread-safe)."""
+        predicted, latency = self.agent.query(question)
+        metrics = calculate_metrics(predicted, expected)
+        
+        return TaskResult(
+            query=question,
+            expected=expected,
+            predicted=predicted,
+            latency_ms=latency,
+            memory_construction_time=self.agent.memory_construction_time,
+            **metrics
+        )
+    
+    def _evaluate_queries_concurrent(self, qa_pairs: List[Tuple[str, Any]]) -> List[TaskResult]:
+        """Evaluate multiple queries concurrently."""
+        results = []
+        
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            futures = {
+                executor.submit(self._evaluate_query, q, a): (q, a) 
+                for q, a in qa_pairs
+            }
+            
+            for future in as_completed(futures):
+                try:
+                    result = future.result()
+                    with self._lock:
+                        results.append(result)
+                except Exception as e:
+                    logger.warning(f"Query failed: {e}")
+        
+        return results
     
     def evaluate_sh_qa(self, dataset) -> List[TaskResult]:
-        """Single-hop QA evaluation."""
+        """Single-hop QA evaluation with concurrent query processing."""
         logger.info("📊 Evaluating SH-QA (Single-Hop QA)...")
+        logger.info(f"   Using {self.max_workers} concurrent workers")
         results = []
         
         # Use Accurate_Retrieval split
@@ -472,19 +517,12 @@ class AccurateRetrievalEvaluator:
             chunks = chunk_text(context, chunk_size=512)
             self.agent.memorize_batch(chunks, evolve_after=True)
             
-            # Evaluate single-hop questions (typically first few are single-hop)
-            for q_idx, (question, expected) in enumerate(zip(questions[:5], answers[:5])):
-                predicted, latency = self.agent.query(question)
-                metrics = calculate_metrics(predicted, expected)
-                
-                results.append(TaskResult(
-                    query=question,
-                    expected=expected,
-                    predicted=predicted,
-                    latency_ms=latency,
-                    memory_construction_time=self.agent.memory_construction_time,
-                    **metrics
-                ))
+            # Evaluate single-hop questions CONCURRENTLY
+            qa_pairs = list(zip(questions[:5], answers[:5]))
+            sample_results = self._evaluate_queries_concurrent(qa_pairs)
+            results.extend(sample_results)
+            
+            logger.info(f"   Sample {idx+1}/{min(len(samples), 3)}: {len(sample_results)} queries evaluated")
             
             if idx >= 2:  # Limit samples for speed
                 break
@@ -493,8 +531,9 @@ class AccurateRetrievalEvaluator:
         return results
     
     def evaluate_mh_qa(self, dataset) -> List[TaskResult]:
-        """Multi-hop QA evaluation."""
+        """Multi-hop QA evaluation with concurrent query processing."""
         logger.info("📊 Evaluating MH-QA (Multi-Hop QA)...")
+        logger.info(f"   Using {self.max_workers} concurrent workers")
         results = []
         
         if "Accurate_Retrieval" not in dataset:
@@ -512,18 +551,12 @@ class AccurateRetrievalEvaluator:
             chunks = chunk_text(context, chunk_size=512)
             self.agent.memorize_batch(chunks, evolve_after=True)
             
-            # Multi-hop questions (typically later in the list)
-            for q_idx, (question, expected) in enumerate(zip(questions[5:15], answers[5:15])):
-                predicted, latency = self.agent.query(question)
-                metrics = calculate_metrics(predicted, expected)
-                
-                results.append(TaskResult(
-                    query=question,
-                    expected=expected,
-                    predicted=predicted,
-                    latency_ms=latency,
-                    **metrics
-                ))
+            # Multi-hop questions CONCURRENTLY
+            qa_pairs = list(zip(questions[5:15], answers[5:15]))
+            sample_results = self._evaluate_queries_concurrent(qa_pairs)
+            results.extend(sample_results)
+            
+            logger.info(f"   Sample {idx+1}/{min(len(samples), 3)}: {len(sample_results)} queries evaluated")
             
             if idx >= 2:
                 break
@@ -532,8 +565,9 @@ class AccurateRetrievalEvaluator:
         return results
     
     def evaluate_lme(self, dataset) -> List[TaskResult]:
-        """LongMemEval (S*) evaluation."""
+        """LongMemEval (S*) evaluation with concurrent query processing."""
         logger.info("📊 Evaluating LME(S*) (Long Memory Evaluation)...")
+        logger.info(f"   Using {self.max_workers} concurrent workers")
         results = []
         
         # LME is in Long_Range_Understanding or can use Accurate_Retrieval
@@ -554,17 +588,12 @@ class AccurateRetrievalEvaluator:
             chunks = chunk_text(context, chunk_size=4096)
             self.agent.memorize_batch(chunks, evolve_after=True)
             
-            for q_idx, (question, expected) in enumerate(zip(questions[:10], answers[:10])):
-                predicted, latency = self.agent.query(question)
-                metrics = calculate_metrics(predicted, expected)
-                
-                results.append(TaskResult(
-                    query=question,
-                    expected=expected,
-                    predicted=predicted,
-                    latency_ms=latency,
-                    **metrics
-                ))
+            # CONCURRENT query processing
+            qa_pairs = list(zip(questions[:10], answers[:10]))
+            sample_results = self._evaluate_queries_concurrent(qa_pairs)
+            results.extend(sample_results)
+            
+            logger.info(f"   Sample {idx+1}/{min(len(samples), 3)}: {len(sample_results)} queries evaluated")
             
             if idx >= 2:
                 break
@@ -632,16 +661,54 @@ class TestTimeLearningEvaluator:
     TTL (Test-Time Learning) Evaluator
     
     Tests: MCC (Multi-Choice Cloze), Recom (Movie Recommendation)
+    
+    Uses concurrent query processing for faster evaluation.
     """
     
-    def __init__(self, agent: GraphMemAgent, max_samples: int = 100):
+    def __init__(self, agent: GraphMemAgent, max_samples: int = 100, max_workers: int = 10):
         self.agent = agent
         self.max_samples = max_samples
+        self.max_workers = max_workers
         self.result = CompetencyResult("TTL")
+        self._lock = Lock()
+    
+    def _evaluate_query(self, question: str, expected: Any) -> TaskResult:
+        """Evaluate a single query (thread-safe)."""
+        predicted, latency = self.agent.query(question)
+        metrics = calculate_metrics(predicted, expected)
+        
+        return TaskResult(
+            query=question,
+            expected=expected,
+            predicted=predicted,
+            latency_ms=latency,
+            **metrics
+        )
+    
+    def _evaluate_queries_concurrent(self, qa_pairs: List[Tuple[str, Any]]) -> List[TaskResult]:
+        """Evaluate multiple queries concurrently."""
+        results = []
+        
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            futures = {
+                executor.submit(self._evaluate_query, q, a): (q, a) 
+                for q, a in qa_pairs
+            }
+            
+            for future in as_completed(futures):
+                try:
+                    result = future.result()
+                    with self._lock:
+                        results.append(result)
+                except Exception as e:
+                    logger.warning(f"Query failed: {e}")
+        
+        return results
     
     def evaluate_mcc(self, dataset) -> List[TaskResult]:
-        """Multi-Choice Cloze (in-context learning) evaluation."""
+        """Multi-Choice Cloze (in-context learning) with concurrent processing."""
         logger.info("📊 Evaluating MCC (Multi-Choice Cloze)...")
+        logger.info(f"   Using {self.max_workers} concurrent workers")
         results = []
         
         if "Test_Time_Learning" not in dataset:
@@ -660,17 +727,12 @@ class TestTimeLearningEvaluator:
             chunks = chunk_text(context, chunk_size=4096)
             self.agent.memorize_batch(chunks, evolve_after=True)
             
-            for q_idx, (question, expected) in enumerate(zip(questions[:10], answers[:10])):
-                predicted, latency = self.agent.query(question)
-                metrics = calculate_metrics(predicted, expected)
-                
-                results.append(TaskResult(
-                    query=question,
-                    expected=expected,
-                    predicted=predicted,
-                    latency_ms=latency,
-                    **metrics
-                ))
+            # CONCURRENT query processing
+            qa_pairs = list(zip(questions[:10], answers[:10]))
+            sample_results = self._evaluate_queries_concurrent(qa_pairs)
+            results.extend(sample_results)
+            
+            logger.info(f"   Sample {idx+1}/{min(len(samples), 3)}: {len(sample_results)} queries evaluated")
             
             if idx >= 2:
                 break
@@ -733,12 +795,49 @@ class LongRangeUnderstandingEvaluator:
     LRU (Long-Range Understanding) Evaluator
     
     Tests: Summ (Summarization), DetQA (Detective QA)
+    
+    Uses concurrent query processing for faster evaluation.
     """
     
-    def __init__(self, agent: GraphMemAgent, max_samples: int = 50):
+    def __init__(self, agent: GraphMemAgent, max_samples: int = 50, max_workers: int = 10):
         self.agent = agent
         self.max_samples = max_samples
+        self.max_workers = max_workers
         self.result = CompetencyResult("LRU")
+        self._lock = Lock()
+    
+    def _evaluate_query(self, question: str, expected: Any) -> TaskResult:
+        """Evaluate a single query (thread-safe)."""
+        predicted, latency = self.agent.query(question)
+        metrics = calculate_metrics(predicted, expected)
+        
+        return TaskResult(
+            query=question,
+            expected=expected,
+            predicted=predicted,
+            latency_ms=latency,
+            **metrics
+        )
+    
+    def _evaluate_queries_concurrent(self, qa_pairs: List[Tuple[str, Any]]) -> List[TaskResult]:
+        """Evaluate multiple queries concurrently."""
+        results = []
+        
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            futures = {
+                executor.submit(self._evaluate_query, q, a): (q, a) 
+                for q, a in qa_pairs
+            }
+            
+            for future in as_completed(futures):
+                try:
+                    result = future.result()
+                    with self._lock:
+                        results.append(result)
+                except Exception as e:
+                    logger.warning(f"Query failed: {e}")
+        
+        return results
     
     def evaluate_summ(self, dataset) -> List[TaskResult]:
         """Summarization evaluation (∞Bench-Sum)."""
@@ -832,12 +931,49 @@ class SelectiveForgettingEvaluator:
     Tests: FC-SH (FactConsolidation Single-Hop), FC-MH (FactConsolidation Multi-Hop)
     
     This is where GraphMem's priority-based conflict resolution shines!
+    
+    Uses concurrent query processing for faster evaluation.
     """
     
-    def __init__(self, agent: GraphMemAgent, max_samples: int = 100):
+    def __init__(self, agent: GraphMemAgent, max_samples: int = 100, max_workers: int = 10):
         self.agent = agent
         self.max_samples = max_samples
+        self.max_workers = max_workers
         self.result = CompetencyResult("SF")
+        self._lock = Lock()
+    
+    def _evaluate_query(self, question: str, expected: Any) -> TaskResult:
+        """Evaluate a single query (thread-safe)."""
+        predicted, latency = self.agent.query(question)
+        metrics = calculate_metrics(predicted, expected)
+        
+        return TaskResult(
+            query=question,
+            expected=expected,
+            predicted=predicted,
+            latency_ms=latency,
+            **metrics
+        )
+    
+    def _evaluate_queries_concurrent(self, qa_pairs: List[Tuple[str, Any]]) -> List[TaskResult]:
+        """Evaluate multiple queries concurrently."""
+        results = []
+        
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            futures = {
+                executor.submit(self._evaluate_query, q, a): (q, a) 
+                for q, a in qa_pairs
+            }
+            
+            for future in as_completed(futures):
+                try:
+                    result = future.result()
+                    with self._lock:
+                        results.append(result)
+                except Exception as e:
+                    logger.warning(f"Query failed: {e}")
+        
+        return results
     
     def evaluate_fc_sh(self, dataset) -> List[TaskResult]:
         """FactConsolidation Single-Hop evaluation.
@@ -907,21 +1043,14 @@ class SelectiveForgettingEvaluator:
                        f"{self.agent.evolution_stats['decays']} total decays")
             
             # Evaluate - system should return UPDATED facts (not old ones!)
-            for q_idx, (question, expected) in enumerate(zip(questions[:10], answers[:10])):
-                predicted, latency = self.agent.query(question)
-                metrics = calculate_metrics(predicted, expected)
-                
-                results.append(TaskResult(
-                    query=question,
-                    expected=expected,
-                    predicted=predicted,
-                    latency_ms=latency,
-                    **metrics
-                ))
-                
-                # Log conflicts detected
-                if metrics["substring_match"] < 1.0:
-                    logger.debug(f"      ❌ Q{q_idx+1}: Expected '{expected}', got '{predicted[:50]}...'")
+            # CONCURRENT query processing
+            qa_pairs = list(zip(questions[:10], answers[:10]))
+            sample_results = self._evaluate_queries_concurrent(qa_pairs)
+            results.extend(sample_results)
+            
+            # Log success rate
+            correct = sum(1 for r in sample_results if r.substring_match >= 1.0)
+            logger.info(f"   Sample {idx+1} result: {correct}/{len(sample_results)} correct")
             
             if idx >= 3:
                 break
@@ -930,8 +1059,9 @@ class SelectiveForgettingEvaluator:
         return results
     
     def evaluate_fc_mh(self, dataset) -> List[TaskResult]:
-        """FactConsolidation Multi-Hop evaluation."""
+        """FactConsolidation Multi-Hop evaluation with concurrent processing."""
         logger.info("📊 Evaluating FC-MH (FactConsolidation Multi-Hop)...")
+        logger.info(f"   Using {self.max_workers} concurrent workers")
         results = []
         
         if "Conflict_Resolution" not in dataset:
@@ -946,7 +1076,7 @@ class SelectiveForgettingEvaluator:
             questions = sample.get("questions", [])
             answers = sample.get("answers", [])
             
-            # Same phased ingestion
+            # Same phased ingestion with evolution
             total_len = len(context)
             
             chunks_1 = chunk_text(context[:int(total_len * 0.4)], chunk_size=512)
@@ -958,18 +1088,14 @@ class SelectiveForgettingEvaluator:
             chunks_3 = chunk_text(context[int(total_len * 0.7):], chunk_size=512)
             self.agent.memorize_batch(chunks_3, evolve_after=True)
             
-            # Multi-hop questions require chain reasoning through updated facts
-            for q_idx, (question, expected) in enumerate(zip(questions[10:20], answers[10:20])):
-                predicted, latency = self.agent.query(question)
-                metrics = calculate_metrics(predicted, expected)
-                
-                results.append(TaskResult(
-                    query=question,
-                    expected=expected,
-                    predicted=predicted,
-                    latency_ms=latency,
-                    **metrics
-                ))
+            # Multi-hop questions - CONCURRENT processing
+            qa_pairs = list(zip(questions[10:20], answers[10:20]))
+            sample_results = self._evaluate_queries_concurrent(qa_pairs)
+            results.extend(sample_results)
+            
+            # Log success rate
+            correct = sum(1 for r in sample_results if r.substring_match >= 1.0)
+            logger.info(f"   Sample {idx+1} result: {correct}/{len(sample_results)} correct")
             
             if idx >= 3:
                 break
@@ -1008,6 +1134,7 @@ def run_full_benchmark(
     azure_deployment: str = None,
     azure_embedding_deployment: str = None,
     max_samples: int = 100,
+    max_workers: int = 10,
     competencies: List[str] = None,
     output_path: str = "benchmark_results.json",
 ) -> BenchmarkResult:
@@ -1021,6 +1148,7 @@ def run_full_benchmark(
     print(f"   Model: {llm_model}")
     print(f"   Embeddings: {embedding_model}")
     print(f"   Max Samples: {max_samples}")
+    print(f"   Concurrent Workers: {max_workers}")
     print(f"   Competencies: {competencies or ['AR', 'TTL', 'LRU', 'SF']}")
     print("="*80 + "\n")
     
@@ -1053,7 +1181,7 @@ def run_full_benchmark(
         print("\n" + "="*60)
         print("📊 ACCURATE RETRIEVAL (AR)")
         print("="*60)
-        ar_eval = AccurateRetrievalEvaluator(agent, max_samples)
+        ar_eval = AccurateRetrievalEvaluator(agent, max_samples, max_workers)
         result.ar = ar_eval.run(dataset)
         
         print("\n📈 AR Results:")
@@ -1065,7 +1193,7 @@ def run_full_benchmark(
         print("\n" + "="*60)
         print("📊 TEST-TIME LEARNING (TTL)")
         print("="*60)
-        ttl_eval = TestTimeLearningEvaluator(agent, max_samples)
+        ttl_eval = TestTimeLearningEvaluator(agent, max_samples, max_workers)
         result.ttl = ttl_eval.run(dataset)
         
         print("\n📈 TTL Results:")
@@ -1077,7 +1205,7 @@ def run_full_benchmark(
         print("\n" + "="*60)
         print("📊 LONG-RANGE UNDERSTANDING (LRU)")
         print("="*60)
-        lru_eval = LongRangeUnderstandingEvaluator(agent, max_samples)
+        lru_eval = LongRangeUnderstandingEvaluator(agent, max_samples, max_workers)
         result.lru = lru_eval.run(dataset)
         
         print("\n📈 LRU Results:")
@@ -1089,7 +1217,7 @@ def run_full_benchmark(
         print("\n" + "="*60)
         print("📊 SELECTIVE FORGETTING (SF)")
         print("="*60)
-        sf_eval = SelectiveForgettingEvaluator(agent, max_samples)
+        sf_eval = SelectiveForgettingEvaluator(agent, max_samples, max_workers)
         result.sf = sf_eval.run(dataset)
         
         print("\n📈 SF Results:")
@@ -1231,6 +1359,8 @@ Examples:
                        help="Embedding model name")
     parser.add_argument("--max-samples", type=int, default=100,
                        help="Maximum samples per task")
+    parser.add_argument("--workers", type=int, default=20,
+                       help="Number of concurrent workers for parallel query processing")
     parser.add_argument("--competencies", type=str, nargs="+", default=None,
                        choices=["AR", "TTL", "LRU", "SF"],
                        help="Which competencies to evaluate (default: all)")
@@ -1252,6 +1382,7 @@ Examples:
         azure_deployment=args.azure_deployment,
         azure_embedding_deployment=args.azure_embedding_deployment,
         max_samples=args.max_samples,
+        max_workers=args.workers,
         competencies=args.competencies,
         output_path=args.output,
     )
