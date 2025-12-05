@@ -1580,3 +1580,118 @@
 2025-12-05 11:51:13,871 | HTTP Request: POST https://openai-simba.openai.azure.com/openai/deployments/gpt-4.1-mini/chat/completions?api-version=2024-08-01-preview "HTTP/1.1 200 OK"
 2025-12-05 11:51:18,322 | HTTP Request: POST https://openai-simba.openai.azure.com/openai/deployments/gpt-4.1-mini/chat/completions?api-version=2024-08-01-preview "HTTP/1.1 200 OK"
 2025-12-05 11:51:22,214 | HTTP Request: POST https://openai-simba.openai.azure.com/openai/deployments/gpt-4.1-mini/chat/completions?api-version=2024-08-01-preview "HTTP/1.1 200 OK"
+2025-12-05 11:51:26,400 | HTTP Request: POST https://openai-simba.openai.azure.com/openai/deployments/gpt-4.1-mini/chat/completions?api-version=2024-08-01-preview "HTTP/1.1 200 OK"
+2025-12-05 11:51:30,807 | HTTP Request: POST https://openai-simba.openai.azure.com/openai/deployments/gpt-4.1-mini/chat/completions?api-version=2024-08-01-preview "HTTP/1.1 200 OK"
+2025-12-05 11:51:35,536 | HTTP Request: POST https://openai-simba.openai.azure.com/openai/deployments/gpt-4.1-mini/chat/completions?api-version=2024-08-01-preview "HTTP/1.1 200 OK"
+2025-12-05 11:51:39,663 | HTTP Request: POST https://openai-simba.openai.azure.com/openai/deployments/gpt-4.1-mini/chat/completions?api-version=2024-08-01-preview "HTTP/1.1 200 OK"
+2025-12-05 11:51:44,015 | HTTP Request: POST https://openai-simba.openai.azure.com/openai/deployments/gpt-4.1-mini/chat/completions?api-version=2024-08-01-preview "HTTP/1.1 200 OK"
+2025-12-05 11:51:48,152 | HTTP Request: POST https://openai-simba.openai.azure.com/openai/deployments/gpt-4.1-mini/chat/completions?api-version=2024-08-01-preview "HTTP/1.1 200 OK"
+2025-12-05 11:51:52,924 | HTTP Request: POST https://openai-simba.openai.azure.com/openai/deployments/gpt-4.1-mini/chat/completions?api-version=2024-08-01-preview "HTTP/1.1 200 OK"
+2025-12-05 11:51:52,925 | Detected 23 communities
+2025-12-05 11:51:52,969 | ✅ Batch complete: 10 processed, 0 failed in 123.9s (0.1 docs/sec)
+2025-12-05 11:51:52,970 | Evolution completed: 0 events
+2025-12-05 11:51:52,970 | 🚀 Batch ingesting 10 documents with 20 workers
+2025-12-05 11:51:52,970 | Split content into 1 chunks
+2025-12-05 11:51:52,971 | Split content into 1 chunks
+2025-12-05 11:51:52,973 | Split content into 1 chunks
+2025-12-05 11:51:52,975 | Split content into 1 chunks
+2025-12-05 11:51:52,976 | Split content into 1 chunks
+2025-12-05 11:51:52,978 | Split content into 1 chunks
+2025-12-05 11:51:52,979 | Split content into 1 chunks
+2025-12-05 11:51:52,981 | Split content into 1 chunks
+2025-12-05 11:51:52,982 | Split content into 1 chunks
+2025-12-05 11:51:52,983 | Split content into 1 chunks
+2025-12-05 11:51:55,390 | HTTP Request: POST https://openai-simba.openai.azure.com/openai/deployments/gpt-4.1-mini/chat/completions?api-version=2024-08-01-preview "HTTP/1.1 200 OK"
+2025-12-05 11:51:57,073 | HTTP Request: POST https://openai-simba.openai.azure.com/openai/deployments/text-embedding-3-small/embeddings?api-version=2024-08-01-preview "HTTP/1.1 200 OK"
+2025-12-05 11:51:57,086 | Resolved 2 nodes to 2 unique entities
+2025-12-05 11:51:57,086 | Running coreference resolution against 58 existing entities...
+2025-12-05 11:51:57,541 | HTTP Request: POST https://openai-simba.openai.azure.com/openai/deployments/gpt-4.1-mini/chat/completions?api-version=2024-08-01-preview "HTTP/1.1 200 OK"
+2025-12-05 11:51:57,557 | HTTP Request: POST https://openai-simba.openai.azure.com/openai/deployments/gpt-4.1-mini/chat/completions?api-version=2024-08-01-preview "HTTP/1.1 200 OK"
+2025-12-05 11:51:57,573 | HTTP Request: POST https://openai-simba.openai.azure.com/openai/deployments/gpt-4.1-mini/chat/completions?api-version=2024-08-01-preview "HTTP/1.1 200 OK"
+2025-12-05 11:51:57,669 | HTTP Request: POST https://openai-simba.openai.azure.com/openai/deployments/gpt-4.1-mini/chat/completions?api-version=2024-08-01-preview "HTTP/1.1 200 OK"
+2025-12-05 11:51:57,696 | HTTP Request: POST https://openai-simba.openai.azure.com/openai/deployments/gpt-4.1-mini/chat/completions?api-version=2024-08-01-preview "HTTP/1.1 200 OK"
+2025-12-05 11:51:57,776 | HTTP Request: POST https://openai-simba.openai.azure.com/openai/deployments/gpt-4.1-mini/chat/completions?api-version=2024-08-01-preview "HTTP/1.1 200 OK"
+2025-12-05 11:51:57,878 | HTTP Request: POST https://openai-simba.openai.azure.com/openai/deployments/text-embedding-3-small/embeddings?api-version=2024-08-01-preview "HTTP/1.1 200 OK"
+2025-12-05 11:51:57,889 | Resolved 2 nodes to 2 unique entities
+2025-12-05 11:51:57,889 | Running coreference resolution against 58 existing entities...
+2025-12-05 11:51:57,904 | HTTP Request: POST https://openai-simba.openai.azure.com/openai/deployments/gpt-4.1-mini/chat/completions?api-version=2024-08-01-preview "HTTP/1.1 200 OK"
+2025-12-05 11:51:57,936 | HTTP Request: POST https://openai-simba.openai.azure.com/openai/deployments/gpt-4.1-mini/chat/completions?api-version=2024-08-01-preview "HTTP/1.1 200 OK"
+2025-12-05 11:51:57,937 | Resolved 1 coreferences
+2025-12-05 11:51:57,938 | Found 1 coreferences, applying to nodes...
+2025-12-05 11:51:57,938 | Extracted 2 unique entities, 2 relationships
+2025-12-05 11:51:58,151 | HTTP Request: POST https://openai-simba.openai.azure.com/openai/deployments/text-embedding-3-small/embeddings?api-version=2024-08-01-preview "HTTP/1.1 200 OK"
+2025-12-05 11:51:58,163 | Resolved 2 nodes to 2 unique entities
+2025-12-05 11:51:58,163 | Running coreference resolution against 58 existing entities...
+2025-12-05 11:51:58,336 | HTTP Request: POST https://openai-simba.openai.azure.com/openai/deployments/gpt-4.1-mini/chat/completions?api-version=2024-08-01-preview "HTTP/1.1 200 OK"
+2025-12-05 11:51:58,469 | HTTP Request: POST https://openai-simba.openai.azure.com/openai/deployments/text-embedding-3-small/embeddings?api-version=2024-08-01-preview "HTTP/1.1 200 OK"
+2025-12-05 11:51:58,479 | Resolved 2 nodes to 2 unique entities
+2025-12-05 11:51:58,479 | Running coreference resolution against 58 existing entities...
+2025-12-05 11:51:58,583 | HTTP Request: POST https://openai-simba.openai.azure.com/openai/deployments/text-embedding-3-small/embeddings?api-version=2024-08-01-preview "HTTP/1.1 200 OK"
+2025-12-05 11:51:58,631 | HTTP Request: POST https://openai-simba.openai.azure.com/openai/deployments/text-embedding-3-small/embeddings?api-version=2024-08-01-preview "HTTP/1.1 200 OK"
+2025-12-05 11:51:58,667 | HTTP Request: POST https://openai-simba.openai.azure.com/openai/deployments/text-embedding-3-small/embeddings?api-version=2024-08-01-preview "HTTP/1.1 200 OK"
+2025-12-05 11:51:58,678 | Resolved 2 nodes to 2 unique entities
+2025-12-05 11:51:58,678 | Running coreference resolution against 58 existing entities...
+2025-12-05 11:51:58,732 | HTTP Request: POST https://openai-simba.openai.azure.com/openai/deployments/text-embedding-3-small/embeddings?api-version=2024-08-01-preview "HTTP/1.1 200 OK"
+2025-12-05 11:51:58,857 | HTTP Request: POST https://openai-simba.openai.azure.com/openai/deployments/gpt-4.1-mini/chat/completions?api-version=2024-08-01-preview "HTTP/1.1 200 OK"
+2025-12-05 11:51:58,913 | HTTP Request: POST https://openai-simba.openai.azure.com/openai/deployments/text-embedding-3-small/embeddings?api-version=2024-08-01-preview "HTTP/1.1 200 OK"
+2025-12-05 11:51:58,920 | Resolved 2 nodes to 2 unique entities
+2025-12-05 11:51:58,920 | Running coreference resolution against 58 existing entities...
+2025-12-05 11:51:58,993 | HTTP Request: POST https://openai-simba.openai.azure.com/openai/deployments/text-embedding-3-small/embeddings?api-version=2024-08-01-preview "HTTP/1.1 200 OK"
+2025-12-05 11:51:59,001 | Resolved 2 nodes to 2 unique entities
+2025-12-05 11:51:59,001 | Running coreference resolution against 58 existing entities...
+2025-12-05 11:51:59,024 | HTTP Request: POST https://openai-simba.openai.azure.com/openai/deployments/gpt-4.1-mini/chat/completions?api-version=2024-08-01-preview "HTTP/1.1 200 OK"
+2025-12-05 11:51:59,037 | Resolved 1 coreferences
+2025-12-05 11:51:59,038 | Found 1 coreferences, applying to nodes...
+2025-12-05 11:51:59,038 | Extracted 2 unique entities, 4 relationships
+2025-12-05 11:51:59,063 | HTTP Request: POST https://openai-simba.openai.azure.com/openai/deployments/text-embedding-3-small/embeddings?api-version=2024-08-01-preview "HTTP/1.1 200 OK"
+2025-12-05 11:51:59,098 | HTTP Request: POST https://openai-simba.openai.azure.com/openai/deployments/gpt-4.1-mini/chat/completions?api-version=2024-08-01-preview "HTTP/1.1 200 OK"
+2025-12-05 11:51:59,101 | Resolved 0 coreferences
+2025-12-05 11:51:59,101 | Extracted 2 unique entities, 1 relationships
+2025-12-05 11:51:59,167 | HTTP Request: POST https://openai-simba.openai.azure.com/openai/deployments/text-embedding-3-small/embeddings?api-version=2024-08-01-preview "HTTP/1.1 200 OK"
+2025-12-05 11:51:59,185 | HTTP Request: POST https://openai-simba.openai.azure.com/openai/deployments/gpt-4.1-mini/chat/completions?api-version=2024-08-01-preview "HTTP/1.1 200 OK"
+2025-12-05 11:51:59,186 | Resolved 0 coreferences
+2025-12-05 11:51:59,186 | Extracted 2 unique entities, 2 relationships
+2025-12-05 11:51:59,391 | HTTP Request: POST https://openai-simba.openai.azure.com/openai/deployments/text-embedding-3-small/embeddings?api-version=2024-08-01-preview "HTTP/1.1 200 OK"
+2025-12-05 11:51:59,535 | HTTP Request: POST https://openai-simba.openai.azure.com/openai/deployments/gpt-4.1-mini/chat/completions?api-version=2024-08-01-preview "HTTP/1.1 200 OK"
+2025-12-05 11:51:59,536 | Resolved 2 coreferences
+2025-12-05 11:51:59,537 | Found 2 coreferences, applying to nodes...
+2025-12-05 11:51:59,537 | Extracted 2 unique entities, 1 relationships
+2025-12-05 11:51:59,648 | HTTP Request: POST https://openai-simba.openai.azure.com/openai/deployments/text-embedding-3-small/embeddings?api-version=2024-08-01-preview "HTTP/1.1 200 OK"
+2025-12-05 11:51:59,659 | HTTP Request: POST https://openai-simba.openai.azure.com/openai/deployments/text-embedding-3-small/embeddings?api-version=2024-08-01-preview "HTTP/1.1 200 OK"
+2025-12-05 11:51:59,671 | Resolved 2 nodes to 2 unique entities
+2025-12-05 11:51:59,671 | Running coreference resolution against 58 existing entities...
+2025-12-05 11:51:59,743 | HTTP Request: POST https://openai-simba.openai.azure.com/openai/deployments/text-embedding-3-small/embeddings?api-version=2024-08-01-preview "HTTP/1.1 200 OK"
+2025-12-05 11:51:59,748 | Resolved 2 nodes to 2 unique entities
+2025-12-05 11:51:59,748 | Running coreference resolution against 58 existing entities...
+2025-12-05 11:51:59,823 | HTTP Request: POST https://openai-simba.openai.azure.com/openai/deployments/gpt-4.1-mini/chat/completions?api-version=2024-08-01-preview "HTTP/1.1 200 OK"
+2025-12-05 11:51:59,824 | Resolved 1 coreferences
+2025-12-05 11:51:59,824 | Found 1 coreferences, applying to nodes...
+2025-12-05 11:51:59,824 | Extracted 2 unique entities, 1 relationships
+2025-12-05 11:51:59,967 | HTTP Request: POST https://openai-simba.openai.azure.com/openai/deployments/text-embedding-3-small/embeddings?api-version=2024-08-01-preview "HTTP/1.1 200 OK"
+2025-12-05 11:52:00,014 | HTTP Request: POST https://openai-simba.openai.azure.com/openai/deployments/gpt-4.1-mini/chat/completions?api-version=2024-08-01-preview "HTTP/1.1 200 OK"
+2025-12-05 11:52:00,015 | Resolved 1 coreferences
+2025-12-05 11:52:00,016 | Found 1 coreferences, applying to nodes...
+2025-12-05 11:52:00,016 | Extracted 2 unique entities, 4 relationships
+2025-12-05 11:52:00,299 | HTTP Request: POST https://openai-simba.openai.azure.com/openai/deployments/text-embedding-3-small/embeddings?api-version=2024-08-01-preview "HTTP/1.1 200 OK"
+2025-12-05 11:52:00,352 | HTTP Request: POST https://openai-simba.openai.azure.com/openai/deployments/gpt-4.1-mini/chat/completions?api-version=2024-08-01-preview "HTTP/1.1 200 OK"
+2025-12-05 11:52:00,353 | Resolved 0 coreferences
+2025-12-05 11:52:00,353 | Extracted 2 unique entities, 1 relationships
+2025-12-05 11:52:00,672 | HTTP Request: POST https://openai-simba.openai.azure.com/openai/deployments/text-embedding-3-small/embeddings?api-version=2024-08-01-preview "HTTP/1.1 200 OK"
+2025-12-05 11:52:00,977 | HTTP Request: POST https://openai-simba.openai.azure.com/openai/deployments/text-embedding-3-small/embeddings?api-version=2024-08-01-preview "HTTP/1.1 200 OK"
+2025-12-05 11:52:00,982 | Resolved 3 nodes to 3 unique entities
+2025-12-05 11:52:00,982 | Running coreference resolution against 58 existing entities...
+2025-12-05 11:52:01,023 | HTTP Request: POST https://openai-simba.openai.azure.com/openai/deployments/gpt-4.1-mini/chat/completions?api-version=2024-08-01-preview "HTTP/1.1 200 OK"
+2025-12-05 11:52:01,024 | Resolved 1 coreferences
+2025-12-05 11:52:01,024 | Found 1 coreferences, applying to nodes...
+2025-12-05 11:52:01,024 | Extracted 2 unique entities, 1 relationships
+2025-12-05 11:52:02,033 | HTTP Request: POST https://openai-simba.openai.azure.com/openai/deployments/gpt-4.1-mini/chat/completions?api-version=2024-08-01-preview "HTTP/1.1 200 OK"
+2025-12-05 11:52:02,035 | Resolved 2 coreferences
+2025-12-05 11:52:02,036 | Found 2 coreferences, applying to nodes...
+2025-12-05 11:52:02,036 | Extracted 3 unique entities, 4 relationships
+2025-12-05 11:52:02,036 |    Progress: 10/10 (1.1 docs/sec)
+2025-12-05 11:52:14,949 | HTTP Request: POST https://openai-simba.openai.azure.com/openai/deployments/gpt-4.1-mini/chat/completions?api-version=2024-08-01-preview "HTTP/1.1 200 OK"
+2025-12-05 11:52:19,225 | HTTP Request: POST https://openai-simba.openai.azure.com/openai/deployments/gpt-4.1-mini/chat/completions?api-version=2024-08-01-preview "HTTP/1.1 200 OK"
+2025-12-05 11:52:26,512 | HTTP Request: POST https://openai-simba.openai.azure.com/openai/deployments/gpt-4.1-mini/chat/completions?api-version=2024-08-01-preview "HTTP/1.1 200 OK"
+2025-12-05 11:52:44,549 | HTTP Request: POST https://openai-simba.openai.azure.com/openai/deployments/gpt-4.1-mini/chat/completions?api-version=2024-08-01-preview "HTTP/1.1 200 OK"
+2025-12-05 11:53:08,997 | HTTP Request: POST https://openai-simba.openai.azure.com/openai/deployments/gpt-4.1-mini/chat/completions?api-version=2024-08-01-preview "HTTP/1.1 200 OK"
+2025-12-05 11:53:14,521 | HTTP Request: POST https://openai-simba.openai.azure.com/openai/deployments/gpt-4.1-mini/chat/completions?api-version=2024-08-01-preview "HTTP/1.1 200 OK"

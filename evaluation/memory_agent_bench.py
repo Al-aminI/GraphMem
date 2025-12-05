@@ -266,30 +266,45 @@ class MemoryAgentBenchEvaluator:
         
         results = []
         
-        # Ingest full context in chunks using batch ingestion (20 workers)
-        logger.info("      📄 Ingesting context with 20 workers...")
+        # Ingest full context in chunks with CONTINUOUS EVOLUTION
+        logger.info("      📄 Ingesting context with CONTINUOUS evolution...")
         chunk_size = 8000
         chunks = [context[i:i+chunk_size] for i in range(0, len(context), chunk_size)]
         
-        # Prepare documents for batch ingestion
-        documents = [{"id": f"chunk_{i}", "content": chunk} for i, chunk in enumerate(chunks[:100])]
+        # Split into batches for continuous evolution
+        batch_size = max(5, len(chunks) // 4)  # ~4 evolution cycles
+        all_docs = [{"id": f"chunk_{i}", "content": chunk} for i, chunk in enumerate(chunks[:100])]
         
-        try:
-            gm.ingest_batch(
-                documents=documents,
-                max_workers=20,
-                show_progress=True,
-                aggressive=True,  # Infinite retry on rate limits
-            )
-        except Exception as e:
-            logger.warning(f"Batch ingestion error: {e}")
+        for batch_idx in range(0, len(all_docs), batch_size):
+            batch = all_docs[batch_idx:batch_idx + batch_size]
+            
+            try:
+                gm.ingest_batch(
+                    documents=batch,
+                    max_workers=20,
+                    show_progress=False,
+                    aggressive=True,
+                )
+            except Exception as e:
+                logger.warning(f"Batch ingestion error: {e}")
+            
+            # Evolve after each batch (except first) - CONTINUOUS LEARNING
+            if batch_idx > 0:
+                try:
+                    evolution_result = gm.evolve()
+                    events = evolution_result.events if hasattr(evolution_result, 'events') else evolution_result
+                    consolidations = sum(1 for e in events if 'consolidat' in str(e.evolution_type).lower())
+                    decays = sum(1 for e in events if 'decay' in str(e.evolution_type).lower())
+                    logger.info(f"         Batch {batch_idx//batch_size + 1}: {len(batch)} docs → {consolidations} consolidations, {decays} decays")
+                except Exception as e:
+                    logger.debug(f"Evolution error: {e}")
         
-        # Run evolution to consolidate entities
-        logger.info("      🔄 Evolving memory...")
+        # Final evolution after all ingestion
+        logger.info("      🔄 Final evolution...")
         try:
             gm.evolve()
         except Exception as e:
-            logger.debug(f"Evolution error: {e}")
+            logger.debug(f"Final evolution error: {e}")
         
         # Query each question
         for i, (q, a_list) in enumerate(zip(questions, answers)):
@@ -339,27 +354,40 @@ class MemoryAgentBenchEvaluator:
         results = []
         
         # For TTL, context often contains demonstrations
-        # Ingest and let GraphMem extract patterns
-        logger.info("      📚 Learning from demonstrations (20 workers)...")
+        # Ingest with CONTINUOUS evolution to learn patterns incrementally
+        logger.info("      📚 Learning from demonstrations with CONTINUOUS evolution...")
         
         chunk_size = 5000
         chunks = [context[i:i+chunk_size] for i in range(0, len(context), chunk_size)]
         
-        # Prepare documents for batch ingestion
-        documents = [{"id": f"demo_{i}", "content": chunk} for i, chunk in enumerate(chunks[:50])]
+        # Split into batches for continuous learning
+        batch_size = max(3, len(chunks) // 3)
+        all_docs = [{"id": f"demo_{i}", "content": chunk} for i, chunk in enumerate(chunks[:50])]
         
-        try:
-            gm.ingest_batch(
-                documents=documents,
-                max_workers=20,
-                show_progress=True,
-                aggressive=True,
-            )
-        except Exception as e:
-            logger.warning(f"Demo ingestion error: {e}")
+        for batch_idx in range(0, len(all_docs), batch_size):
+            batch = all_docs[batch_idx:batch_idx + batch_size]
+            
+            try:
+                gm.ingest_batch(
+                    documents=batch,
+                    max_workers=20,
+                    show_progress=False,
+                    aggressive=True,
+                )
+            except Exception as e:
+                logger.warning(f"Demo ingestion error: {e}")
+            
+            # Evolve after each batch (except first) - pattern consolidation
+            if batch_idx > 0:
+                try:
+                    evolution_result = gm.evolve()
+                    events = evolution_result.events if hasattr(evolution_result, 'events') else evolution_result
+                    logger.info(f"         Batch {batch_idx//batch_size + 1}: {len(events)} evolution events")
+                except:
+                    pass
         
-        # Evolve to consolidate learned patterns
-        logger.info("      🔄 Consolidating learned patterns...")
+        # Final evolution
+        logger.info("      🔄 Final pattern consolidation...")
         try:
             gm.evolve()
         except:
@@ -415,32 +443,45 @@ class MemoryAgentBenchEvaluator:
         
         results = []
         
-        # Ingest the narrative with batch processing
-        logger.info("      📖 Ingesting narrative (20 workers)...")
+        # Ingest the narrative with CONTINUOUS evolution
+        logger.info("      📖 Ingesting narrative with CONTINUOUS evolution...")
         chunk_size = 6000
         chunks = [context[i:i+chunk_size] for i in range(0, len(context), chunk_size)]
         
-        # Prepare documents for batch ingestion
-        documents = [{"id": f"narrative_{i}", "content": chunk} for i, chunk in enumerate(chunks[:80])]
+        # Split into batches for continuous evolution
+        batch_size = max(5, len(chunks) // 4)
+        all_docs = [{"id": f"narrative_{i}", "content": chunk} for i, chunk in enumerate(chunks[:80])]
         
-        try:
-            gm.ingest_batch(
-                documents=documents,
-                max_workers=20,
-                show_progress=True,
-                aggressive=True,
-            )
-        except Exception as e:
-            logger.warning(f"Narrative ingestion error: {e}")
+        for batch_idx in range(0, len(all_docs), batch_size):
+            batch = all_docs[batch_idx:batch_idx + batch_size]
+            
+            try:
+                gm.ingest_batch(
+                    documents=batch,
+                    max_workers=20,
+                    show_progress=False,
+                    aggressive=True,
+                )
+            except Exception as e:
+                logger.warning(f"Narrative ingestion error: {e}")
+            
+            # Evolve after each batch (except first) - builds narrative graph
+            if batch_idx > 0:
+                try:
+                    evolution_result = gm.evolve()
+                    events = evolution_result.events if hasattr(evolution_result, 'events') else evolution_result
+                    logger.info(f"         Chapter batch {batch_idx//batch_size + 1}: {len(events)} evolution events")
+                except:
+                    pass
         
-        # Evolve to build relationship graph (character relationships, event chains)
-        logger.info("      🔄 Building narrative graph...")
+        # Final evolution to build complete narrative graph
+        logger.info("      🔄 Building complete narrative graph...")
         try:
             gm.evolve()
         except:
             pass
         
-        # If we have keypoints, ingest them as additional context
+        # If we have keypoints, ingest them and evolve again
         if keypoints:
             logger.info(f"      📌 Processing {len(keypoints)} keypoints...")
             kp_docs = [{"id": f"keypoint_{i}", "content": str(kp)} for i, kp in enumerate(keypoints[:20])]
@@ -451,6 +492,8 @@ class MemoryAgentBenchEvaluator:
                     show_progress=False,
                     aggressive=True,
                 )
+                # Evolve after keypoints
+                gm.evolve()
             except:
                 pass
         
@@ -500,6 +543,7 @@ class MemoryAgentBenchEvaluator:
         THIS IS WHERE GRAPHMEM'S TEMPORAL VALIDITY SHINES!
         - valid_from / valid_until on relationships
         - Superseding old facts with new ones
+        - LLM-based decay identifies outdated relationships
         """
         context = sample["context"]
         questions = sample["questions"]
@@ -507,61 +551,92 @@ class MemoryAgentBenchEvaluator:
         
         results = []
         
-        logger.info("      ⚡ CONFLICT RESOLUTION - Testing temporal validity...")
+        logger.info("      ⚡ CONFLICT RESOLUTION - Testing temporal validity with CONTINUOUS evolution...")
         
-        # Split context to simulate temporal updates
-        # Typically, earlier parts have old facts, later parts have updates
+        # Split context into multiple phases to simulate temporal updates
         total_len = len(context)
-        
-        # Phase 1: Ingest first 60% (initial facts) with batch processing
-        initial_context = context[:int(total_len * 0.6)]
-        logger.info("      📝 Phase 1: Ingesting initial facts (20 workers)...")
-        
         chunk_size = 5000
-        chunks = [initial_context[i:i+chunk_size] for i in range(0, len(initial_context), chunk_size)]
         
-        # Batch ingest initial facts
-        initial_docs = [{"id": f"initial_{i}", "content": chunk} for i, chunk in enumerate(chunks[:30])]
+        # Phase 1: Ingest first 40% (initial facts) - NO evolution yet
+        initial_context = context[:int(total_len * 0.4)]
+        logger.info("      📝 Phase 1: Ingesting INITIAL facts (baseline)...")
+        
+        initial_chunks = [initial_context[i:i+chunk_size] for i in range(0, len(initial_context), chunk_size)]
+        initial_docs = [{"id": f"initial_{i}", "content": chunk} for i, chunk in enumerate(initial_chunks[:20])]
+        
         try:
             gm.ingest_batch(
                 documents=initial_docs,
                 max_workers=20,
-                show_progress=True,
+                show_progress=False,
                 aggressive=True,
             )
         except Exception as e:
             logger.warning(f"Initial facts ingestion error: {e}")
         
-        # Evolve to establish initial knowledge
-        try:
-            gm.evolve()
-        except:
-            pass
+        # DON'T evolve after first ingestion - establish baseline
+        nodes_initial = len(gm._memory.nodes)
+        edges_initial = len(gm._memory.edges)
+        logger.info(f"         Initial state: {nodes_initial} entities, {edges_initial} relationships")
         
-        # Phase 2: Ingest remaining 40% (updates/conflicts) with batch processing
-        update_context = context[int(total_len * 0.6):]
-        logger.info("      🔄 Phase 2: Ingesting updates/conflicts (20 workers)...")
+        # Phase 2: Ingest middle 30% (some updates) - EVOLVE to consolidate
+        middle_context = context[int(total_len * 0.4):int(total_len * 0.7)]
+        logger.info("      🔄 Phase 2: Ingesting UPDATES + evolving...")
         
-        chunks = [update_context[i:i+chunk_size] for i in range(0, len(update_context), chunk_size)]
+        middle_chunks = [middle_context[i:i+chunk_size] for i in range(0, len(middle_context), chunk_size)]
+        middle_docs = [{"id": f"middle_{i}", "content": chunk} for i, chunk in enumerate(middle_chunks[:15])]
         
-        # Batch ingest updates
-        update_docs = [{"id": f"update_{i}", "content": chunk} for i, chunk in enumerate(chunks[:20])]
         try:
             gm.ingest_batch(
-                documents=update_docs,
+                documents=middle_docs,
                 max_workers=20,
-                show_progress=True,
+                show_progress=False,
                 aggressive=True,
             )
         except Exception as e:
-            logger.warning(f"Updates ingestion error: {e}")
+            logger.warning(f"Middle ingestion error: {e}")
         
-        # Evolve again - this should handle conflicts via temporal validity
-        logger.info("      🔄 Resolving conflicts via evolution...")
+        # EVOLVE - should start detecting temporal conflicts
         try:
-            gm.evolve()
+            evolution_result = gm.evolve()
+            events = evolution_result.events if hasattr(evolution_result, 'events') else evolution_result
+            consolidations = sum(1 for e in events if 'consolidat' in str(e.evolution_type).lower())
+            decays = sum(1 for e in events if 'decay' in str(e.evolution_type).lower())
+            logger.info(f"         Evolution 1: {consolidations} consolidations, {decays} decays")
         except:
             pass
+        
+        # Phase 3: Ingest final 30% (latest facts) - EVOLVE for conflict resolution
+        final_context = context[int(total_len * 0.7):]
+        logger.info("      ⚡ Phase 3: Ingesting LATEST facts + CONFLICT resolution...")
+        
+        final_chunks = [final_context[i:i+chunk_size] for i in range(0, len(final_context), chunk_size)]
+        final_docs = [{"id": f"final_{i}", "content": chunk} for i, chunk in enumerate(final_chunks[:15])]
+        
+        try:
+            gm.ingest_batch(
+                documents=final_docs,
+                max_workers=20,
+                show_progress=False,
+                aggressive=True,
+            )
+        except Exception as e:
+            logger.warning(f"Final ingestion error: {e}")
+        
+        # FINAL EVOLUTION - LLM-based decay should identify and mark outdated relationships
+        try:
+            evolution_result = gm.evolve()
+            events = evolution_result.events if hasattr(evolution_result, 'events') else evolution_result
+            consolidations = sum(1 for e in events if 'consolidat' in str(e.evolution_type).lower())
+            decays = sum(1 for e in events if 'decay' in str(e.evolution_type).lower())
+            logger.info(f"         Evolution 2: {consolidations} consolidations, {decays} decays")
+        except:
+            pass
+        
+        nodes_final = len(gm._memory.nodes)
+        edges_final = len(gm._memory.edges)
+        logger.info(f"         Final state: {nodes_final} entities, {edges_final} relationships")
+        logger.info(f"         Change: {nodes_final - nodes_initial:+d} entities, {edges_final - edges_initial:+d} relationships")
         
         # Query - should return UPDATED information, not old
         for i, (q, a_list) in enumerate(zip(questions, answers)):
