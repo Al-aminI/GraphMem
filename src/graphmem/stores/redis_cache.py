@@ -114,14 +114,14 @@ class RedisCache:
             
             total_deleted = 0
             for pattern in patterns:
-            cursor = 0
-            while True:
-                cursor, keys = self.client.scan(cursor, match=pattern, count=100)
-                if keys:
-                    self.client.delete(*keys)
+                cursor = 0
+                while True:
+                    cursor, keys = self.client.scan(cursor, match=pattern, count=100)
+                    if keys:
+                        self.client.delete(*keys)
                         total_deleted += len(keys)
-                if cursor == 0:
-                    break
+                    if cursor == 0:
+                        break
             
             logger.debug(f"Invalidated {total_deleted} cache entries for user={user_id}, memory={memory_id}")
         except Exception as e:

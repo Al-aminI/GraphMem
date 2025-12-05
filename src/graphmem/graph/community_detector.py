@@ -140,7 +140,7 @@ class CommunityDetector:
             
             # Determine importance from nodes (use .value for comparison)
             if community_nodes:
-            importance = max(
+                importance = max(
                     community_nodes,
                     key=lambda n: n.importance.value,
                 ).importance
@@ -196,14 +196,14 @@ class CommunityDetector:
                 except (AttributeError, ZeroDivisionError):
                     # Fallback if louvain not available or fails
                     if len(G.edges()) > 0:
-                    communities = list(nx.community.greedy_modularity_communities(G))
+                        communities = list(nx.community.greedy_modularity_communities(G))
                     else:
                         communities = [set(G.nodes())]
             elif self.algorithm == "label_propagation":
                 communities = list(nx.community.label_propagation_communities(G))
             else:
                 if len(G.edges()) > 0:
-                communities = list(nx.community.greedy_modularity_communities(G))
+                    communities = list(nx.community.greedy_modularity_communities(G))
                 else:
                     communities = [set(G.nodes())]
             

@@ -611,15 +611,15 @@ class GraphMem:
             if progress_callback:
                 progress_callback("building_communities", 0.8)
             
-                # Create safe copies for community detection
-                # Use dict.copy() + values() which is safer than list(values())
-                nodes_snapshot = list(self._memory.nodes.copy().values())
-                edges_snapshot = list(self._memory.edges.copy().values())
-                
-                # Rebuild communities with snapshot copies
+            # Create safe copies for community detection
+            # Use dict.copy() + values() which is safer than list(values())
+            nodes_snapshot = list(self._memory.nodes.copy().values())
+            edges_snapshot = list(self._memory.edges.copy().values())
+            
+            # Rebuild communities with snapshot copies
             clusters = self._community_detector.detect(
-                    nodes=nodes_snapshot,
-                    edges=edges_snapshot,
+                nodes=nodes_snapshot,
+                edges=edges_snapshot,
                 memory_id=self.memory_id,
             )
             
@@ -632,9 +632,9 @@ class GraphMem:
             # Persist to storage
             self._graph_store.save_memory(self._memory)
             
-                # Invalidate cache (multi-tenant safe)
+            # Invalidate cache (multi-tenant safe)
             if self._cache:
-                    self._cache.invalidate(self.memory_id, user_id=self.user_id)
+                self._cache.invalidate(self.memory_id, user_id=self.user_id)
             
             elapsed = time.time() - start_time
             
