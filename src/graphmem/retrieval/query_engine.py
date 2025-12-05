@@ -200,7 +200,7 @@ class QueryEngine:
         nodes: List[MemoryNode],
         edges: List[MemoryEdge],
     ) -> Optional[Dict[str, Any]]:
-        """Query a single community for an answer."""
+        """Query a single community for an answer, using source chunks for rich context."""
         # Get entities in this cluster
         cluster_nodes = [n for n in nodes if n.name in cluster.entities]
         cluster_node_ids = {n.id for n in cluster_nodes}
@@ -228,10 +228,16 @@ class QueryEngine:
         entity_context = self._format_entities(all_relevant_nodes)
         rel_context = self._format_relationships(cluster_edges)
         
+        # NEW: Extract source chunks from cluster nodes for original text context
+        source_text_context = self._extract_source_chunks(all_relevant_nodes)
+        
         prompt = f"""You are answering questions using knowledge from a memory system.
 
 COMMUNITY SUMMARY:
 {cluster.summary}
+
+ORIGINAL SOURCE TEXT (contains full details from ingested documents):
+{source_text_context}
 
 ENTITIES IN THIS COMMUNITY:
 {entity_context}
@@ -241,14 +247,17 @@ RELATIONSHIPS:
 
 QUESTION: {query}
 
-INSTRUCTIONS:
-1. Consider ALL entities and relationships shown above
-2. If multiple facts are relevant to the question, include them ALL
-3. Cross-reference the community summary with the specific entities and relationships
-4. Provide a comprehensive answer that covers all relevant information
+CRITICAL INSTRUCTIONS:
+1. **PRIORITIZE SOURCE TEXT**: The original source text contains the most complete information.
+   Use it to find specific details, numbers, dates, and facts.
+2. Consider ALL entities and relationships shown above
+3. If multiple facts are relevant to the question, include them ALL
+4. Cross-reference the community summary with the source text and entities
+5. Provide a comprehensive answer that covers all relevant information
+6. Include specific numbers, dates, and details from the source text
 
 Respond in JSON format:
-{{"answer": "your comprehensive answer", "confidence": 0-10}}"""
+{{"answer": "your comprehensive answer with specific details", "confidence": 0-10}}"""
         
         try:
             response = self.llm.complete(prompt)
@@ -259,6 +268,30 @@ Respond in JSON format:
         except Exception as e:
             logger.error(f"LLM query failed: {e}")
             return None
+    
+    def _extract_source_chunks(self, nodes: List[MemoryNode]) -> str:
+        """Extract source chunks from nodes for context."""
+        all_chunks = []
+        for node in nodes[:10]:  # Top 10 nodes
+            if hasattr(node, 'properties') and node.properties:
+                source_chunks = node.properties.get('source_chunks', [])
+                for chunk in source_chunks:
+                    if chunk and chunk not in all_chunks:
+                        all_chunks.append(chunk)
+                
+                single_chunk = node.properties.get('source_chunk', '')
+                if single_chunk and single_chunk not in all_chunks:
+                    all_chunks.append(single_chunk)
+        
+        if not all_chunks:
+            return "No source text available"
+        
+        # Combine chunks with separators
+        result_parts = []
+        for i, chunk in enumerate(all_chunks[:5], 1):  # Top 5 chunks
+            result_parts.append(f"[Source {i}]: {chunk[:1500]}")  # Up to 1500 chars each
+        
+        return "\n\n".join(result_parts)
     
     def _aggregate_answers(
         self,
@@ -315,36 +348,68 @@ Synthesized Answer:"""
         edges: List[MemoryEdge],
     ) -> str:
         """
-        Build context DIRECTLY from retrieved entities.
+        Build COMPREHENSIVE context from retrieved entities, including source chunks.
         
         This is more precise than community summaries because it focuses
         on the specific entities found by retrieval, avoiding noise.
+        
+        NEW: Includes SOURCE CHUNKS - the original text from which entities were extracted.
+        This provides rich context that goes beyond just entity descriptions.
         """
         if not nodes:
             return ""
         
         context_parts = []
         
-        # Entity details
-        context_parts.append("## ENTITIES (directly relevant to your query)")
+        # ===== SECTION 1: ORIGINAL SOURCE TEXT =====
+        # This is CRITICAL - contains ALL the information from the ingested documents
+        all_source_chunks = []
+        for node in nodes[:15]:  # Top 15 most relevant nodes
+            if hasattr(node, 'properties') and node.properties:
+                # Get source chunks (list of all chunks mentioning this entity)
+                source_chunks = node.properties.get('source_chunks', [])
+                for chunk in source_chunks:
+                    if chunk and chunk not in all_source_chunks:
+                        all_source_chunks.append(chunk)
+                
+                # Also check single source_chunk
+                single_chunk = node.properties.get('source_chunk', '')
+                if single_chunk and single_chunk not in all_source_chunks:
+                    all_source_chunks.append(single_chunk)
+        
+        if all_source_chunks:
+            context_parts.append("## ORIGINAL SOURCE TEXT (contains full details)")
+            for i, chunk in enumerate(all_source_chunks[:10], 1):  # Top 10 chunks
+                # Include substantial portion of each chunk
+                context_parts.append(f"\n[Source {i}]:")
+                context_parts.append(chunk[:2000])  # Up to 2000 chars per chunk
+        
+        # ===== SECTION 2: EXTRACTED ENTITIES =====
+        context_parts.append("\n\n## EXTRACTED ENTITIES")
         for node in nodes[:20]:  # More entities
             aliases = ""
             if hasattr(node, 'aliases') and node.aliases:
                 other = [a for a in node.aliases if a != node.name]
                 if other:
-                    aliases = f" [Also known as: {', '.join(other[:5])}]"
+                    aliases = f" [Also known as: {', '.join(other[:8])}]"  # More aliases
             
             desc = node.description or "No description"
-            context_parts.append(f"• {node.name} ({node.entity_type}){aliases}")
-            context_parts.append(f"  Description: {desc[:300]}")
+            context_parts.append(f"\n• {node.name} ({node.entity_type}){aliases}")
+            context_parts.append(f"  Description: {desc}")  # Full description, no truncation
+            
+            # Include occurrence count if available
+            if hasattr(node, 'properties') and node.properties:
+                occurrences = node.properties.get('occurrence_count', 1)
+                if occurrences > 1:
+                    context_parts.append(f"  [Mentioned {occurrences} times across documents]")
         
-        # Relationships
+        # ===== SECTION 3: RELATIONSHIPS =====
         if edges:
-            context_parts.append("\n## RELATIONSHIPS")
+            context_parts.append("\n\n## RELATIONSHIPS")
             node_ids = {n.id for n in nodes}
             node_names = {n.name.lower(): n.name for n in nodes}
             
-            for edge in edges[:30]:  # More relationships
+            for edge in edges[:40]:  # More relationships
                 # Only include relationships involving our nodes
                 source_match = edge.source_id in node_ids or edge.source_id.lower() in node_names
                 target_match = edge.target_id in node_ids or edge.target_id.lower() in node_names
@@ -360,7 +425,7 @@ Synthesized Answer:"""
                     
                     context_parts.append(f"• {edge.source_id} --[{edge.relation_type}]--> {edge.target_id}{temporal}")
                     if edge.description:
-                        context_parts.append(f"  Detail: {edge.description[:200]}")
+                        context_parts.append(f"  Detail: {edge.description}")  # Full description
         
         return "\n".join(context_parts)
     

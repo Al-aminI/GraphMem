@@ -18,51 +18,92 @@ from graphmem.core.exceptions import ExtractionError
 logger = logging.getLogger(__name__)
 
 
-# State-of-the-art extraction prompt with ALIASES and TEMPORAL VALIDITY
+# State-of-the-art EXHAUSTIVE extraction prompt
+# Captures EVERY piece of information from the text
 EXTRACTION_PROMPT = """
-You are an expert knowledge graph extractor. Extract ALL entities and relationships.
+You are an EXHAUSTIVE knowledge graph extractor. Your job is to capture EVERY SINGLE piece of information.
 
-## CRITICAL RULES
+## CRITICAL: EXTRACT EVERYTHING
 
-1. **ALIASES ARE MANDATORY**: When someone is called by MULTIPLE names in the text, you MUST list ALL names as aliases.
-   - If text says "Dr. Alexander Chen, also known as 'The Quantum Pioneer'" 
-   - Extract: name="Alexander Chen", aliases="Dr. Alexander Chen, Dr. Chen, The Quantum Pioneer, Alex Chen"
-   - INCLUDE the full name AND all variations mentioned or implied
+You MUST extract:
+1. **ALL ENTITIES** - Every person, organization, product, location, concept, event, date, number mentioned
+2. **ALL ATTRIBUTES** - Every property, value, characteristic of each entity
+3. **ALL RELATIONSHIPS** - Every connection between entities, explicit or implicit
+4. **ALL FACTS** - Every statement, claim, or piece of data in the text
+5. **ALL NUMBERS** - Percentages, amounts, counts, measurements, statistics
+6. **ALL DATES/TIMES** - Years, dates, periods, durations, deadlines
+7. **ALL LOCATIONS** - Countries, cities, addresses, regions
+8. **ALL ALIASES** - Nicknames, abbreviations, titles, alternate names
 
-2. **TEMPORAL VALIDITY**: For relationships that can change over time (CEO, employee, etc.), extract dates.
-   - If text says "was CEO from 2015 to 2018" → valid_from=2015, valid_until=2018
-   - If text says "is the current CEO since 2023" → valid_from=2023, valid_until=present
+## ENTITY EXTRACTION RULES
+
+1. **ALIASES ARE MANDATORY**: 
+   - "Dr. Alexander Chen" → aliases="Dr. Alexander Chen, Dr. Chen, Alex Chen, A. Chen"
+   - "Apple Inc." → aliases="Apple, Apple Computer, AAPL"
+   - Include EVERY name variation mentioned OR commonly known
+   
+2. **RICH DESCRIPTIONS**: Include ALL facts about the entity in description
+   - BAD: "A company" 
+   - GOOD: "Technology company founded in 1976, headquartered in Cupertino, CA, market cap $3T, makes iPhone, Mac, iPad"
+
+3. **ENTITY TYPES**: Use specific types
+   - Person, Organization, Company, Product, Location, Event, Date, Concept, Technology, Number, Percentage, Amount
+
+## RELATIONSHIP EXTRACTION RULES
+
+1. **TEMPORAL VALIDITY**: Extract dates when mentioned
+   - "was CEO from 2015 to 2018" → valid_from=2015, valid_until=2018
+   - "since 2023" → valid_from=2023, valid_until=present
+   - "in Q3 2024" → valid_from=2024-07, valid_until=2024-09
+
+2. **IMPLICIT RELATIONSHIPS**: Extract implied connections
+   - "Tesla's Elon Musk" implies "Musk leads Tesla"
+   - "the $5M investment" implies an investment relationship
+
+3. **ATTRIBUTE RELATIONSHIPS**: Create relationships for entity attributes
+   - "Tesla has 100,000 employees" → (Tesla, has_employees, 100000)
+   - "Apple's revenue is $400B" → (Apple, has_revenue, $400B)
 
 ## FORMAT
 
-Entity: ("entity"$$$$<CANONICAL_NAME>$$$$<TYPE>$$$$<DESCRIPTION>$$$$<ALL_ALIASES_COMMA_SEPARATED>)
-Relationship: ("relationship"$$$$<SOURCE>$$$$<TARGET>$$$$<RELATION>$$$$<DESC>$$$$<VALID_FROM>$$$$<VALID_UNTIL>)
+Entity: ("entity"$$$$<CANONICAL_NAME>$$$$<TYPE>$$$$<DETAILED_DESCRIPTION>$$$$<ALL_ALIASES>)
+Relationship: ("relationship"$$$$<SOURCE>$$$$<TARGET>$$$$<RELATION>$$$$<DESCRIPTION>$$$$<VALID_FROM>$$$$<VALID_UNTIL>)
 
-## EXAMPLES
+## EXAMPLE - EXHAUSTIVE EXTRACTION
 
-Text: "Dr. Alexander Chen, nicknamed 'The Quantum Pioneer', founded Quantum AI Labs in 2015."
-
-Output:
-("entity"$$$$Alexander Chen$$$$Person$$$$Quantum computing researcher who founded Quantum AI Labs$$$$Dr. Alexander Chen, Dr. Chen, Alex Chen, The Quantum Pioneer, Professor Chen)
-("entity"$$$$Quantum AI Labs$$$$Organization$$$$Research laboratory founded in 2015$$$$none)
-("relationship"$$$$Alexander Chen$$$$Quantum AI Labs$$$$founded$$$$Founded the company in 2015$$$$2015$$$$present)
-
-Text: "John Smith was CEO of Acme Corp from 2010 to 2015. Jane Doe became CEO in 2015."
+Text: "In Q3 2024, Nvidia (NVDA) reported $35.1B revenue, up 94% year-over-year. CEO Jensen Huang announced the new Blackwell B200 GPU would ship in early 2025. The company now has over 26,000 employees worldwide."
 
 Output:
-("entity"$$$$John Smith$$$$Person$$$$Former CEO of Acme Corp$$$$none)
-("entity"$$$$Jane Doe$$$$Person$$$$Current CEO of Acme Corp$$$$none)
-("entity"$$$$Acme Corp$$$$Organization$$$$Company$$$$Acme, Acme Corporation)
-("relationship"$$$$John Smith$$$$Acme Corp$$$$was CEO of$$$$Served as CEO$$$$2010$$$$2015)
-("relationship"$$$$Jane Doe$$$$Acme Corp$$$$is CEO of$$$$Current CEO$$$$2015$$$$present)
+("entity"$$$$Nvidia$$$$Company$$$$Semiconductor company specializing in GPUs and AI chips, reported $35.1B revenue in Q3 2024 with 94% YoY growth, has 26,000+ employees worldwide$$$$NVDA, Nvidia Corporation, nVidia)
+("entity"$$$$Jensen Huang$$$$Person$$$$CEO of Nvidia who announced Blackwell B200 GPU$$$$Jensen, J. Huang)
+("entity"$$$$Q3 2024$$$$Date$$$$Third quarter of fiscal year 2024, July-September 2024$$$$Q3 FY2024, 3Q24)
+("entity"$$$$$35.1B$$$$Amount$$$$Nvidia's Q3 2024 revenue of 35.1 billion dollars$$$$35.1 billion, $35.1 billion)
+("entity"$$$$94%$$$$Percentage$$$$Year-over-year revenue growth rate$$$$94 percent)
+("entity"$$$$Blackwell B200$$$$Product$$$$New GPU product from Nvidia shipping in early 2025$$$$B200, Blackwell GPU, B200 GPU)
+("entity"$$$$26,000$$$$Number$$$$Number of Nvidia employees worldwide$$$$26000, 26K)
+("entity"$$$$early 2025$$$$Date$$$$Expected shipping date for Blackwell B200$$$$Q1 2025)
+("relationship"$$$$Jensen Huang$$$$Nvidia$$$$is CEO of$$$$Chief Executive Officer$$$$none$$$$present)
+("relationship"$$$$Nvidia$$$$$35.1B$$$$reported revenue of$$$$Q3 2024 quarterly revenue$$$$2024-07$$$$2024-09)
+("relationship"$$$$Nvidia$$$$94%$$$$achieved growth of$$$$Year-over-year revenue growth in Q3 2024$$$$2024-07$$$$2024-09)
+("relationship"$$$$Nvidia$$$$Blackwell B200$$$$is developing$$$$New GPU product$$$$none$$$$present)
+("relationship"$$$$Blackwell B200$$$$early 2025$$$$ships in$$$$Expected shipping date$$$$2025-01$$$$2025-03)
+("relationship"$$$$Nvidia$$$$26,000$$$$has employees$$$$Total employee count$$$$none$$$$present)
+("relationship"$$$$Jensen Huang$$$$Blackwell B200$$$$announced$$$$CEO announced the product$$$$2024$$$$2024)
 
-## YOUR TASK
+## YOUR TASK - BE EXHAUSTIVE!
 
-Extract from this text (target {max_triplets}+ triplets):
+Extract EVERYTHING from this text. Target {max_triplets}+ triplets. Include:
+- Every named entity (people, companies, products, places)
+- Every numeric value (amounts, percentages, counts)  
+- Every date or time period
+- Every relationship between any two entities
+- Every attribute or property of any entity
+
+Text to extract from:
 
 {text}
 
-## OUTPUT (entities first, then relationships)
+## OUTPUT (entities first, then relationships) - Extract MORE than you think is needed!
 """
 
 
@@ -102,7 +143,7 @@ class ExtractionConfig:
     """Configuration for knowledge extraction."""
     chunk_size: int = 2048
     chunk_overlap: int = 200
-    max_triplets_per_chunk: int = 40
+    max_triplets_per_chunk: int = 100  # Increased for exhaustive extraction
     max_workers: int = 8
     retry_on_failure: bool = True
     max_retries: int = 3
@@ -372,6 +413,10 @@ class KnowledgeGraph:
                     logger.warning(f"Failed to generate embedding for {name}: {e}")
                     embedding = None
                 
+                # Store the FULL source chunk for context during answer generation
+                # This is critical for not losing information from the original text
+                source_chunks = [chunk]  # Will accumulate during entity resolution
+                
                 node = MemoryNode(
                     id="",  # Will be generated
                     name=name,
@@ -379,7 +424,12 @@ class KnowledgeGraph:
                     description=description,
                     aliases=aliases if isinstance(aliases, set) else set(aliases) if aliases else set(),
                     embedding=embedding,  # Add embedding for vector search
-                    properties={**metadata, "source_chunk": chunk[:200]},
+                    properties={
+                        **metadata,
+                        "source_chunk": chunk,  # FULL chunk, not truncated
+                        "source_chunks": source_chunks,  # List of all chunks mentioning this entity
+                        "extraction_context": chunk[:500],  # Preview for debugging
+                    },
                     user_id=user_id,     # Multi-tenant isolation
                     memory_id=memory_id,
                 )
@@ -516,25 +566,31 @@ class KnowledgeGraph:
         memory_id: str,
         user_id: str = "default",
     ) -> Tuple[List[MemoryNode], List[MemoryEdge]]:
-        """Fallback extraction with simpler prompt."""
+        """Fallback extraction with simpler but still exhaustive prompt."""
         try:
-            prompt = f"""Extract ALL entities and relationships from this text.
+            prompt = f"""Extract EVERYTHING from this text - be exhaustive!
 
-IMPORTANT: 
-- Extract EVERY person, organization, product, location, date mentioned
-- Extract relationships like "is CEO of", "founded", "produces", "located in"
-- For roles (CEO, founder), ALWAYS create a relationship between the person and organization
+EXTRACT:
+- EVERY person, organization, product, location, date, number, percentage
+- EVERY relationship between any two things
+- ALL numeric values (revenue, employees, percentages, amounts)
+- ALL dates and time periods
+- ALL attributes and properties of entities
             
 Text: {chunk}
 
 Format your response EXACTLY like this:
-ENTITY: name | type | description
+ENTITY: name | type | detailed description with all facts
 RELATIONSHIP: source -> relation -> target | description
 
 Example:
-ENTITY: Elon Musk | Person | CEO of Tesla
-ENTITY: Tesla | Organization | Electric vehicle company
-RELATIONSHIP: Elon Musk -> is CEO of -> Tesla | Elon Musk serves as CEO"""
+ENTITY: Nvidia | Company | Semiconductor company, $35.1B Q3 2024 revenue, 94% YoY growth, 26K employees
+ENTITY: $35.1B | Amount | Nvidia Q3 2024 revenue
+ENTITY: Jensen Huang | Person | CEO of Nvidia
+RELATIONSHIP: Nvidia -> has_revenue -> $35.1B | Q3 2024 revenue
+RELATIONSHIP: Jensen Huang -> is CEO of -> Nvidia | Current CEO
+
+Extract EVERYTHING - numbers, dates, amounts, percentages, all relationships:"""
             
             response = self.llm.complete(prompt)
             
@@ -578,7 +634,12 @@ RELATIONSHIP: Elon Musk -> is CEO of -> Tesla | Elon Musk serves as CEO"""
                 nodes.append(MemoryNode(
                     id="", name=name, entity_type=etype,
                     description=desc, embedding=embedding,
-                    properties=metadata, 
+                    properties={
+                        **metadata,
+                        "source_chunk": chunk,  # FULL chunk for context
+                        "source_chunks": [chunk],  # Accumulates during resolution
+                        "extraction_context": chunk[:500],
+                    }, 
                     user_id=user_id,     # Multi-tenant isolation
                     memory_id=memory_id,
                 ))

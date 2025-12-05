@@ -124,6 +124,21 @@ class EntityResolver:
                 if best_embedding is None and node.embedding is not None:
                     best_embedding = np.array(node.embedding) if isinstance(node.embedding, list) else node.embedding
                 
+                # Get accumulated source chunks from original node
+                source_chunks = []
+                if merged.original_node and hasattr(merged.original_node, 'properties'):
+                    source_chunks = merged.original_node.properties.get('source_chunks', [])
+                
+                # Also include new node's source chunks
+                if node.properties:
+                    new_chunks = node.properties.get('source_chunks', [])
+                    for chunk in new_chunks:
+                        if chunk and chunk not in source_chunks:
+                            source_chunks.append(chunk)
+                    new_chunk = node.properties.get('source_chunk', '')
+                    if new_chunk and new_chunk not in source_chunks:
+                        source_chunks.append(new_chunk)
+                
                 resolved_node = MemoryNode(
                     id=key,  # Use canonical key as ID
                     name=merged.name,
@@ -137,6 +152,7 @@ class EntityResolver:
                         "canonical_name": merged.name,
                         "aliases": list(merged.aliases),
                         "occurrence_count": merged.occurrences,
+                        "source_chunks": source_chunks,  # ACCUMULATED chunks from all mentions
                     },
                     user_id=user_id,  # Multi-tenant isolation
                     memory_id=memory_id,
@@ -365,7 +381,7 @@ class EntityResolver:
         canonical: EntityCandidate,
         new_node: MemoryNode,
     ) -> EntityCandidate:
-        """Merge a new node into an existing canonical entity, including aliases."""
+        """Merge a new node into an existing canonical entity, including aliases and source chunks."""
         cleaned_name = self._clean_name(new_node.name)
         
         # Update aliases from node name
@@ -388,6 +404,30 @@ class EntityResolver:
         # Update descriptions
         if new_node.description:
             canonical.descriptions.add(new_node.description)
+        
+        # ACCUMULATE SOURCE CHUNKS - critical for context during answer generation
+        if hasattr(new_node, 'properties') and new_node.properties:
+            new_chunks = new_node.properties.get('source_chunks', [])
+            new_chunk = new_node.properties.get('source_chunk', '')
+            
+            # Get existing chunks from original node
+            existing_chunks = []
+            if canonical.original_node and hasattr(canonical.original_node, 'properties'):
+                existing_chunks = canonical.original_node.properties.get('source_chunks', [])
+            
+            # Merge chunks (avoid duplicates)
+            all_chunks = list(existing_chunks)
+            for chunk in new_chunks:
+                if chunk and chunk not in all_chunks:
+                    all_chunks.append(chunk)
+            if new_chunk and new_chunk not in all_chunks:
+                all_chunks.append(new_chunk)
+            
+            # Store accumulated chunks back on the original node's properties
+            if canonical.original_node:
+                if not hasattr(canonical.original_node, 'properties') or canonical.original_node.properties is None:
+                    canonical.original_node.properties = {}
+                canonical.original_node.properties['source_chunks'] = all_chunks
         
         # Blend embeddings
         if new_node.description:
