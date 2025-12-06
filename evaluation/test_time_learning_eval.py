@@ -188,11 +188,10 @@ def evaluate_test_time_learning(
             embedding_api_base=config.embedding_api_base,
             embedding_model=config.embedding_model,
             # Azure settings if present
-            azure_api_version=getattr(config, 'azure_api_version', None),
+            azure_api_version=getattr(config, 'azure_api_version', "2024-12-01-preview"),
             azure_deployment=getattr(config, 'azure_deployment', None),
             azure_embedding_deployment=getattr(config, 'azure_embedding_deployment', None),
             # Use local Turso for isolated storage
-            store_type="turso",
             turso_db_path=db_path,
         )
         
