@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agentic-graph-mem"
-version = "1.8.6"
+version = "1.8.7"
 description = "Production-Grade Agent Memory Framework for Agentic AI"
 readme = "README.md"
 license = { text = "MIT" }
@@ -113,10 +113,10 @@ Repository = "https://github.com/ameerai/graphmem"
 Issues = "https://github.com/ameerai/graphmem/issues"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/graphmem"]
+packages = ["src/graphmem", "evaluation"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src/graphmem"]
+include = ["src/graphmem", "evaluation"]
 
 [tool.black]
 line-length = 100
