@@ -941,6 +941,7 @@ Example:
     
     def _parse_coreference_response(self, response: str) -> Dict[str, str]:
         """Parse coreference response into mention→canonical mapping."""
+        import re
         coreferences = {}
         
         for line in response.split('\n'):
@@ -950,7 +951,18 @@ Example:
                 if len(parts) >= 3:
                     mention = parts[1]
                     canonical = parts[2]
-                    confidence = float(parts[3]) if len(parts) > 3 else 0.5
+                    
+                    # Parse confidence - extract just the numeric part
+                    confidence = 0.5
+                    if len(parts) > 3:
+                        conf_str = parts[3]
+                        # Extract just the decimal number (e.g., "0.95)," -> "0.95")
+                        match = re.search(r'(\d+\.?\d*)', conf_str)
+                        if match:
+                            try:
+                                confidence = float(match.group(1))
+                            except ValueError:
+                                confidence = 0.5
                     
                     # Only accept high-confidence coreferences
                     if confidence >= 0.7 and mention and canonical:
