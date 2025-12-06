@@ -171,11 +171,30 @@ def evaluate_test_time_learning(
         # Remove old DB if exists for fresh start
         if os.path.exists(db_path):
             os.remove(db_path)
+        if os.path.exists(db_path + "_cache.db"):
+            os.remove(db_path + "_cache.db")
         
-        # Create config with local Turso store
-        sample_config = config.model_copy() if hasattr(config, 'model_copy') else config
-        sample_config.store_type = "turso"
-        sample_config.turso_db_path = db_path
+        # Create new config with Turso storage
+        from graphmem import MemoryConfig
+        sample_config = MemoryConfig(
+            # LLM settings from original config
+            llm_provider=config.llm_provider,
+            llm_api_key=config.llm_api_key,
+            llm_api_base=config.llm_api_base,
+            llm_model=config.llm_model,
+            # Embedding settings from original config
+            embedding_provider=config.embedding_provider,
+            embedding_api_key=config.embedding_api_key,
+            embedding_api_base=config.embedding_api_base,
+            embedding_model=config.embedding_model,
+            # Azure settings if present
+            azure_api_version=getattr(config, 'azure_api_version', None),
+            azure_deployment=getattr(config, 'azure_deployment', None),
+            azure_embedding_deployment=getattr(config, 'azure_embedding_deployment', None),
+            # Use local Turso for isolated storage
+            store_type="turso",
+            turso_db_path=db_path,
+        )
         
         memory = GraphMem(sample_config)
         print(f"\n🗄️ Created fresh GraphMem with Turso DB: {db_path}")
