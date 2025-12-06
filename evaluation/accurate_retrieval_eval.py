@@ -124,12 +124,13 @@ class ARResults:
 # =============================================================================
 
 def evaluate_accurate_retrieval(
-    memory,  # Your GraphMem instance
+    config,  # MemoryConfig for creating fresh instances
     max_samples: int = 10,
     max_questions_per_sample: int = 10,
     max_concurrent: int = 5,
     show_details: bool = True,
     run_evolution: bool = True,
+    turso_db_prefix: str = "ar_eval",
 ) -> Tuple[Dict[str, Any], ARResults]:
     """
     Evaluate GraphMem on Accurate Retrieval task.
@@ -140,17 +141,23 @@ def evaluate_accurate_retrieval(
     - LME: LongMemEval style queries
     - EventQA: Event-based questions
     
+    EACH SAMPLE GETS A FRESH GRAPHMEM INSTANCE WITH LOCAL TURSO DB.
+    
     Args:
-        memory: Your initialized GraphMem instance (fresh)
+        config: MemoryConfig for creating fresh GraphMem instances
         max_samples: Number of samples to test
         max_questions_per_sample: Questions per sample
         max_concurrent: Concurrent queries
         show_details: Print details
         run_evolution: Whether to run evolve() after ingestion
+        turso_db_prefix: Prefix for local Turso database files
     
     Returns:
         Tuple of (metrics dict, ARResults object)
     """
+    from graphmem import GraphMem
+    import os
+    import json
     
     print("📥 Loading Accurate_Retrieval dataset...")
     ds = load_dataset('ai-hyz/MemoryAgentBench')
@@ -159,15 +166,27 @@ def evaluate_accurate_retrieval(
     
     ar_results = ARResults()
     
-    # Categorize samples by source (task type)
-    import json
-    
     for sample_idx in range(min(max_samples, len(ar))):
         sample = ar[sample_idx]
         context = sample.get('context', '')
         questions = sample.get('questions', [])
         answers = sample.get('answers', [])
         metadata = sample.get('metadata', {})
+        
+        # === CREATE FRESH GRAPHMEM WITH LOCAL TURSO DB ===
+        db_path = f"{turso_db_prefix}_sample_{sample_idx}.db"
+        
+        # Remove old DB if exists for fresh start
+        if os.path.exists(db_path):
+            os.remove(db_path)
+        
+        # Create config with local Turso store
+        sample_config = config.model_copy() if hasattr(config, 'model_copy') else config
+        sample_config.store_type = "turso"
+        sample_config.turso_db_path = db_path
+        
+        memory = GraphMem(sample_config)
+        print(f"\n🗄️ Created fresh GraphMem with Turso DB: {db_path}")
         
         # Parse metadata to get source/task type
         if isinstance(metadata, str):

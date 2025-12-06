@@ -117,12 +117,13 @@ class TTLResults:
 # =============================================================================
 
 def evaluate_test_time_learning(
-    memory,  # Your GraphMem instance
+    config,  # MemoryConfig for creating fresh instances
     max_samples: int = 5,
     max_questions_per_sample: int = 10,
     max_concurrent: int = 5,
     show_details: bool = True,
     run_evolution: bool = True,
+    turso_db_prefix: str = "ttl_eval",
 ) -> Tuple[Dict[str, Any], TTLResults]:
     """
     Evaluate GraphMem on Test Time Learning task.
@@ -134,17 +135,22 @@ def evaluate_test_time_learning(
     The key innovation: GraphMem's evolve() should incorporate corrections
     by updating entity priorities and relationships.
     
+    EACH SAMPLE GETS A FRESH GRAPHMEM INSTANCE WITH LOCAL TURSO DB.
+    
     Args:
-        memory: Your initialized GraphMem instance (fresh)
+        config: MemoryConfig for creating fresh GraphMem instances
         max_samples: Number of samples to test
         max_questions_per_sample: Questions per sample
         max_concurrent: Concurrent queries
         show_details: Print details
         run_evolution: Whether to run evolve() after corrections
+        turso_db_prefix: Prefix for local Turso database files
     
     Returns:
         Tuple of (metrics dict, TTLResults object)
     """
+    from graphmem import GraphMem
+    import os
     
     print("📥 Loading Test_Time_Learning dataset...")
     ds = load_dataset('ai-hyz/MemoryAgentBench')
@@ -158,6 +164,21 @@ def evaluate_test_time_learning(
         context = sample.get('context', '')
         questions = sample.get('questions', [])
         answers = sample.get('answers', [])
+        
+        # === CREATE FRESH GRAPHMEM WITH LOCAL TURSO DB ===
+        db_path = f"{turso_db_prefix}_sample_{sample_idx}.db"
+        
+        # Remove old DB if exists for fresh start
+        if os.path.exists(db_path):
+            os.remove(db_path)
+        
+        # Create config with local Turso store
+        sample_config = config.model_copy() if hasattr(config, 'model_copy') else config
+        sample_config.store_type = "turso"
+        sample_config.turso_db_path = db_path
+        
+        memory = GraphMem(sample_config)
+        print(f"\n🗄️ Created fresh GraphMem with Turso DB: {db_path}")
         
         print(f"\n{'='*60}")
         print(f"📋 SAMPLE {sample_idx + 1}/{min(max_samples, len(ttl))}")

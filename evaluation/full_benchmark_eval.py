@@ -62,8 +62,7 @@ class FullBenchmarkResults:
 
 
 def run_full_benchmark(
-    memory,  # Your GraphMem instance
-    config: Optional[Any] = None,  # MemoryConfig for creating fresh instances
+    config,  # MemoryConfig for creating fresh GraphMem instances per sample
     # AR settings
     ar_max_samples: int = 10,
     ar_max_questions: int = 10,
@@ -81,13 +80,15 @@ def run_full_benchmark(
     show_details: bool = False,
     run_evolution: bool = True,
     save_results: bool = True,
+    turso_db_dir: str = "eval_dbs",
 ) -> FullBenchmarkResults:
     """
     Run the full MemoryAgentBench benchmark.
     
+    EACH SAMPLE GETS A FRESH GRAPHMEM INSTANCE WITH LOCAL TURSO DB.
+    
     Args:
-        memory: Your initialized GraphMem instance
-        config: MemoryConfig to create fresh instances (optional)
+        config: MemoryConfig for creating fresh GraphMem instances per sample
         ar_max_samples: Max samples for Accurate Retrieval
         ar_max_questions: Max questions per AR sample
         ttl_max_samples: Max samples for Test Time Learning
@@ -100,10 +101,15 @@ def run_full_benchmark(
         show_details: Print per-question details
         run_evolution: Run evolve() after ingestion
         save_results: Save results to JSON file
+        turso_db_dir: Directory for Turso database files
     
     Returns:
         FullBenchmarkResults object
     """
+    import os
+    
+    # Create directory for Turso DBs
+    os.makedirs(turso_db_dir, exist_ok=True)
     
     results = FullBenchmarkResults()
     results.timestamp = datetime.now().isoformat()
@@ -115,6 +121,7 @@ def run_full_benchmark(
     print("="*80)
     print(f"\n⏰ Started at: {results.timestamp}")
     print(f"📊 Testing all 4 competencies: AR, TTL, LRU, SF")
+    print(f"🗄️ Each sample gets fresh Turso DB in: {turso_db_dir}/")
     print("="*80)
     
     # =========================================================================
@@ -126,12 +133,13 @@ def run_full_benchmark(
     
     try:
         ar_metrics, ar_results = evaluate_accurate_retrieval(
-            memory=memory,
+            config=config,
             max_samples=ar_max_samples,
             max_questions_per_sample=ar_max_questions,
             max_concurrent=max_concurrent,
             show_details=show_details,
             run_evolution=run_evolution,
+            turso_db_prefix=f"{turso_db_dir}/ar",
         )
         results.ar_metrics = ar_metrics
         print_accurate_retrieval_results(ar_metrics)
@@ -148,12 +156,13 @@ def run_full_benchmark(
     
     try:
         ttl_metrics, ttl_results = evaluate_test_time_learning(
-            memory=memory,
+            config=config,
             max_samples=ttl_max_samples,
             max_questions_per_sample=ttl_max_questions,
             max_concurrent=max_concurrent,
             show_details=show_details,
             run_evolution=run_evolution,
+            turso_db_prefix=f"{turso_db_dir}/ttl",
         )
         results.ttl_metrics = ttl_metrics
         print_test_time_learning_results(ttl_metrics)
@@ -170,12 +179,13 @@ def run_full_benchmark(
     
     try:
         lru_metrics, lru_results = evaluate_long_range_understanding(
-            memory=memory,
+            config=config,
             max_samples=lru_max_samples,
             max_questions_per_sample=lru_max_questions,
             max_concurrent=max_concurrent,
             show_details=show_details,
             run_evolution=run_evolution,
+            turso_db_prefix=f"{turso_db_dir}/lru",
         )
         results.lru_metrics = lru_metrics
         print_long_range_understanding_results(lru_metrics)
@@ -192,12 +202,13 @@ def run_full_benchmark(
     
     try:
         sf_metrics, sf_results = evaluate_conflict_resolution(
-            memory=memory,
+            config=config,
             max_samples=sf_max_samples,
             max_questions_per_sample=sf_max_questions,
             max_concurrent=max_concurrent,
             show_details=show_details,
             run_evolution=run_evolution,
+            turso_db_prefix=f"{turso_db_dir}/sf",
         )
         results.sf_metrics = sf_metrics
         print_conflict_resolution_results(sf_metrics)
@@ -336,9 +347,10 @@ if __name__ == "__main__":
     
     To run in a notebook:
     
-    from graphmem import GraphMem, MemoryConfig
+    from graphmem import MemoryConfig
     from full_benchmark_eval import run_full_benchmark
     
+    # Create config (each sample will get its own fresh GraphMem + Turso DB)
     config = MemoryConfig(
         llm_provider="azure",
         llm_api_key="YOUR_KEY",
@@ -350,10 +362,9 @@ if __name__ == "__main__":
         embedding_model="text-embedding-3-small",
     )
     
-    memory = GraphMem(config)
-    
+    # Run full benchmark - each sample gets fresh GraphMem + local Turso DB
     results = run_full_benchmark(
-        memory,
+        config,  # Pass config, not memory!
         ar_max_samples=10,
         ar_max_questions=10,
         ttl_max_samples=5,
@@ -361,9 +372,10 @@ if __name__ == "__main__":
         sf_max_samples=3,
         sf_max_questions=30,
         max_concurrent=5,
-        show_details=False,  # Set True for debugging
+        show_details=False,
         run_evolution=True,  # CRITICAL!
         save_results=True,
+        turso_db_dir="eval_dbs",  # Directory for per-sample Turso DBs
     )
     """)
 
