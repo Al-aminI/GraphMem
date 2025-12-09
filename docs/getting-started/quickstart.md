@@ -116,8 +116,8 @@ config = MemoryConfig(
     turso_db_path="my_agent_memory.db",
 )
 
-# Initialize with a consistent memory_id to find your data again
-memory = GraphMem(config, memory_id="my_agent")
+# Initialize with consistent memory_id AND user_id to find your data again
+memory = GraphMem(config, memory_id="my_agent", user_id="default")
 
 # Learn
 memory.ingest("Tesla is led by CEO Elon Musk. Founded in 2003.")
@@ -141,16 +141,32 @@ for event in events:
 memory.close()
 ```
 
-!!! tip "Use `memory_id` for Consistent Access"
-    Always provide a `memory_id` when creating `GraphMem` to find your data again:
+!!! warning "REQUIRED: Provide `memory_id` AND `user_id` for Persistence"
+    **Both parameters are required** for data to persist correctly:
+    
     ```python
-    # First session
-    memory = GraphMem(config, memory_id="my_agent")
+    # ✅ CORRECT: Both provided - data persists!
+    memory = GraphMem(config, memory_id="my_agent", user_id="user1")
     memory.ingest("...")
     
-    # Later session - same memory_id loads your data!
-    memory = GraphMem(config, memory_id="my_agent")
+    # Later session - same IDs load your data!
+    memory = GraphMem(config, memory_id="my_agent", user_id="user1")
     response = memory.query("...")  # Finds your previously ingested data
+    
+    # ❌ WRONG: No memory_id - new UUID each time, data lost!
+    memory = GraphMem(config)  # Won't find your old data
+    
+    # ❌ WRONG: Different user_id - won't see data from other users
+    memory = GraphMem(config, memory_id="my_agent", user_id="user2")  # Different user
+    ```
+    
+    **Why both?**
+    - `memory_id`: Identifies the memory session/context (like "chat_1", "agent_memory")
+    - `user_id`: Isolates data per user/tenant (defaults to "default" if not provided)
+    
+    For single-user apps, you can use:
+    ```python
+    memory = GraphMem(config, memory_id="my_agent", user_id="default")
     ```
 
 ---

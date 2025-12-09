@@ -232,10 +232,22 @@ class GraphMem:
         
         Args:
             config: Configuration options. Uses defaults if not provided.
-            memory_id: Optional ID for this memory session. Auto-generated if not provided.
+            memory_id: ID for this memory session. **REQUIRED for persistence!**
+                       If None, a new UUID is generated each time (data won't persist across sessions).
             user_id: Optional user/tenant ID for multi-tenant isolation.
                      If not provided, uses config.user_id or falls back to "default".
             auto_evolve: If True, memory evolves automatically on access.
+        
+        !!! warning "Important: Provide memory_id for Persistence"
+            Without a consistent `memory_id`, you'll get a new UUID each time and won't find your old data!
+            
+            ```python
+            # ✅ CORRECT: Data persists
+            memory = GraphMem(config, memory_id="my_agent", user_id="user1")
+            
+            # ❌ WRONG: New UUID each time, data lost!
+            memory = GraphMem(config)  # No memory_id
+            ```
         
         Multi-Tenant Usage:
             # User A's memory
@@ -285,7 +297,15 @@ class GraphMem:
         self._evolution_thread: Optional[threading.Thread] = None
         self._evolution_stop_event = threading.Event()
         
-        logger.info(f"GraphMem instance created (memory_id={self.memory_id})")
+        logger.info(f"GraphMem instance created (memory_id={self.memory_id}, user_id={self.user_id})")
+        
+        # Warn if memory_id is None (data won't persist)
+        if self.memory_id is None:
+            logger.warning(
+                "memory_id is None - a new UUID will be generated. "
+                "Your data won't persist across sessions! "
+                "Provide memory_id='your_id' to enable persistence."
+            )
     
     @property
     def memory(self) -> Memory:

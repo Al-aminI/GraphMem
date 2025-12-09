@@ -23,8 +23,8 @@ config = MemoryConfig(
     turso_db_path="my_agent_memory.db",
 )
 
-# Initialize with a memory_id to find your data again
-memory = GraphMem(config, memory_id="my_agent")
+# Initialize with memory_id AND user_id to find your data again
+memory = GraphMem(config, memory_id="my_agent", user_id="default")
 
 # Learn
 memory.ingest("Tesla is led by CEO Elon Musk. Founded in 2003.")
@@ -144,6 +144,23 @@ memory.ingest("Important information...")
     - `turso_url` + `turso_auth_token` enable **automatic cloud sync**
     - Data is always read/written locally first (fast, works offline)
     - Cloud sync happens automatically in the background
+
+!!! warning "REQUIRED: Provide Both `memory_id` AND `user_id`"
+    For data to persist correctly, you **must** provide both:
+    
+    ```python
+    # ✅ CORRECT
+    memory = GraphMem(config, memory_id="my_agent", user_id="default")
+    
+    # ❌ WRONG - No memory_id = new UUID each time, data lost!
+    memory = GraphMem(config)
+    
+    # ❌ WRONG - Different user_id = won't see other users' data
+    memory = GraphMem(config, memory_id="my_agent", user_id="user2")
+    ```
+    
+    - `memory_id`: Identifies your memory session (required for persistence)
+    - `user_id`: Isolates data per user (defaults to "default" if not provided)
 
 ## With Evolution
 
