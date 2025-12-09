@@ -93,7 +93,7 @@ def get_memory() -> GraphMem:
         
         evolution_enabled=True,
     )
-    return GraphMem(config)
+    return GraphMem(config, memory_id="api_agent", user_id="api_user")
 
 @app.post("/ingest")
 async def ingest(content: str, memory: GraphMem = Depends(get_memory)):

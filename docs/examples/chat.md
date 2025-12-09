@@ -35,7 +35,7 @@ def get_memory(user_id: str) -> GraphMem:
             **base_config,
             turso_db_path=f"memories/{user_id}.db",
         )
-        memories[user_id] = GraphMem(config, user_id=user_id)
+        memories[user_id] = GraphMem(config, memory_id=f"chat_{user_id}", user_id=user_id)
     return memories[user_id]
 
 # Request/Response models

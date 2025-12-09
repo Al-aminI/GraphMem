@@ -34,7 +34,7 @@ class KnowledgeBase:
             # Evolution
             evolution_enabled=True,
         )
-        self.memory = GraphMem(self.config, user_id=org_id)
+        self.memory = GraphMem(self.config, memory_id=f"kb_{org_id}", user_id=org_id)
         self.org_id = org_id
     
     def add_policy(

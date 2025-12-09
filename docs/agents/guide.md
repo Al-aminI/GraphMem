@@ -62,7 +62,7 @@ config = MemoryConfig(
     auto_evolve=True,
 )
 
-memory = GraphMem(config)
+memory = GraphMem(config, memory_id="my_agent", user_id="default")
 
 # Your agent can now remember!
 class SimpleAgent:

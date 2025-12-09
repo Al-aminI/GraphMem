@@ -95,8 +95,8 @@ config = MemoryConfig(
     auto_evolve=True,  # Evolve after each ingestion
 )
 
-# Create memory instance with a consistent memory_id
-memory = GraphMem(config, memory_id="my_agent")
+# Create memory instance with consistent memory_id AND user_id
+memory = GraphMem(config, memory_id="my_agent", user_id="default")
 
 # Your agent can now remember!
 class SimpleAgent:
@@ -264,7 +264,7 @@ class ConversationalAgent:
             decay_enabled=True,
             decay_half_life_days=30,  # Forget unused info after ~30 days
         )
-        self.memory = GraphMem(self.config)
+        self.memory = GraphMem(self.config, memory_id=f"agent_{user_id}", user_id=user_id)
         self.user_id = user_id
     
     def chat(self, user_message: str) -> str:
@@ -344,7 +344,7 @@ class ResearchAgent:
             evolution_enabled=True,
             consolidation_threshold=0.75,  # More aggressive merging
         )
-        self.memory = GraphMem(self.config)
+        self.memory = GraphMem(self.config, memory_id="research_agent", user_id="researcher")
     
     def ingest_documents(self, documents: list[dict]):
         """Ingest multiple documents efficiently."""
@@ -419,7 +419,7 @@ class SupportAgent:
             evolution_enabled=True,
             decay_enabled=True,
         )
-        self.memory = GraphMem(self.config)
+        self.memory = GraphMem(self.config, memory_id="research_agent", user_id="researcher")
     
     def update_knowledge(self, content: str, importance: str = "HIGH"):
         """Update knowledge base with new information."""
@@ -496,7 +496,7 @@ class MultiTenantAgent:
                 # Each tenant gets own database
                 turso_db_path=f"tenants/{tenant_id}/memory.db",
             )
-            self.memories[tenant_id] = GraphMem(config)
+            self.memories[tenant_id] = GraphMem(config, memory_id=f"tenant_{tenant_id}", user_id=tenant_id)
         
         return self.memories[tenant_id]
     
@@ -600,7 +600,7 @@ def get_memory() -> GraphMem:
         
         evolution_enabled=True,
     )
-    return GraphMem(config)
+    return GraphMem(config, memory_id="api_agent", user_id="api_user")
 
 class IngestRequest(BaseModel):
     content: str
@@ -896,7 +896,7 @@ class PersonalAssistant:
             decay_enabled=True,
             decay_half_life_days=90,  # Keep memories for ~3 months
         )
-        self.memory = GraphMem(self.config)
+        self.memory = GraphMem(self.config, memory_id=f"personal_{user_name}", user_id=user_name)
         self.user_name = user_name
     
     def save_note(self, note: str, tags: list[str] = None):
@@ -1005,7 +1005,7 @@ class EnterpriseKB:
             # Evolution for conflict resolution
             evolution_enabled=True,
         )
-        self.memory = GraphMem(self.config)
+        self.memory = GraphMem(self.config, memory_id=f"org_{org_id}", user_id=org_id)
         self.org_id = org_id
     
     def add_policy(self, policy_name: str, content: str, effective_date: str):

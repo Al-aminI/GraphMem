@@ -71,7 +71,7 @@ class ResearchAgent:
         #     embedding_model="text-embedding-ada-002",
         #     ...
         # )
-        self.memory = GraphMem(self.config)
+        self.memory = GraphMem(self.config, memory_id="research_agent", user_id="researcher")
     
     def ingest_documents(self, documents: list[dict]):
         """Ingest multiple documents efficiently."""

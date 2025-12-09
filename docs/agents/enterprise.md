@@ -33,7 +33,7 @@ class MultiTenantAgent:
                 memory_id=f"tenant_{tenant_id}",
                 turso_db_path=f"tenants/{tenant_id}/memory.db",
             )
-            self.memories[tenant_id] = GraphMem(config)
+            self.memories[tenant_id] = GraphMem(config, memory_id=f"tenant_{tenant_id}", user_id=tenant_id)
         return self.memories[tenant_id]
     
     def ingest(self, tenant_id: str, content: str):
@@ -116,7 +116,7 @@ class SupportAgent:
             evolution_enabled=True,
             decay_enabled=True,
         )
-        self.memory = GraphMem(self.config)
+        self.memory = GraphMem(self.config, memory_id=f"support_{company_id}", user_id=company_id)
     
     def update_policy(self, content: str, effective_date: str):
         """Update knowledge base with new policy."""
@@ -192,7 +192,7 @@ class EnterpriseKB:
             user_id=org_id,
             evolution_enabled=True,
         )
-        self.memory = GraphMem(self.config)
+        self.memory = GraphMem(self.config, memory_id=f"org_{org_id}", user_id=org_id)
         self.org_id = org_id
     
     def add_policy(self, name: str, content: str, effective: str):

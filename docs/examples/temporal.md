@@ -17,7 +17,7 @@ config = MemoryConfig(
     turso_db_path="company.db",
 )
 
-memory = GraphMem(config)
+memory = GraphMem(config, memory_id="temporal_example", user_id="default")
 
 # Ingest historical data
 memory.ingest("""

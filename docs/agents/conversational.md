@@ -40,7 +40,7 @@ class ConversationalAgent:
             decay_enabled=True,
             decay_half_life_days=30,
         )
-        self.memory = GraphMem(self.config)
+        self.memory = GraphMem(self.config, memory_id=f"agent_{user_id}", user_id=user_id)
         self.user_id = user_id
     
     def chat(self, user_message: str) -> str:
