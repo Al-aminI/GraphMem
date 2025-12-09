@@ -21,6 +21,7 @@ class ResearchAgent:
     """Agent that learns from multiple documents."""
     
     def __init__(self):
+        # Option 1: OpenAI
         self.config = MemoryConfig(
             llm_provider="openai",
             llm_api_key="sk-...",
@@ -41,6 +42,35 @@ class ResearchAgent:
             evolution_enabled=True,
             consolidation_threshold=0.75,
         )
+        
+        # Option 2: OpenRouter (with custom base URL)
+        # self.config = MemoryConfig(
+        #     llm_provider="openai_compatible",
+        #     llm_api_key="sk-or-v1-...",
+        #     llm_api_base="https://openrouter.ai/api/v1",  # Custom base URL
+        #     llm_model="google/gemini-2.0-flash-001",
+        #     embedding_provider="openai_compatible",
+        #     embedding_api_key="sk-or-v1-...",
+        #     embedding_api_base="https://openrouter.ai/api/v1",  # Custom base URL
+        #     embedding_model="openai/text-embedding-3-small",
+        #     ...
+        # )
+        
+        # Option 3: Azure OpenAI
+        # self.config = MemoryConfig(
+        #     llm_provider="azure_openai",
+        #     llm_api_key="your-azure-key",
+        #     llm_api_base="https://your-resource.openai.azure.com/",  # Azure endpoint
+        #     azure_deployment="gpt-4",
+        #     llm_model="gpt-4",
+        #     azure_api_version="2024-02-15-preview",
+        #     embedding_provider="azure_openai",
+        #     embedding_api_key="your-azure-key",
+        #     embedding_api_base="https://your-resource.openai.azure.com/",  # Azure endpoint
+        #     azure_embedding_deployment="text-embedding-ada-002",
+        #     embedding_model="text-embedding-ada-002",
+        #     ...
+        # )
         self.memory = GraphMem(self.config)
     
     def ingest_documents(self, documents: list[dict]):

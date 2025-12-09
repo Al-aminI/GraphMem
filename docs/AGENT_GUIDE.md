@@ -312,14 +312,16 @@ class ResearchAgent:
     
     def __init__(self):
         self.config = MemoryConfig(
-            llm_provider="azure",
+            llm_provider="azure_openai",
             llm_api_key="...",
-            azure_endpoint="https://your-resource.openai.azure.com/",
+            llm_api_base="https://your-resource.openai.azure.com/",  # Azure endpoint
             azure_deployment="gpt-4",
             llm_model="gpt-4",
+            azure_api_version="2024-02-15-preview",
             
-            embedding_provider="azure",
+            embedding_provider="azure_openai",
             embedding_api_key="...",
+            embedding_api_base="https://your-resource.openai.azure.com/",  # Azure endpoint
             azure_embedding_deployment="text-embedding-ada-002",
             embedding_model="text-embedding-ada-002",
             
@@ -969,14 +971,16 @@ class EnterpriseKB:
     def __init__(self, org_id: str):
         self.config = MemoryConfig(
             # Use Azure OpenAI for enterprise
-            llm_provider="azure",
+            llm_provider="azure_openai",
             llm_api_key=os.getenv("AZURE_OPENAI_KEY"),
-            azure_endpoint=os.getenv("AZURE_ENDPOINT"),
+            llm_api_base=os.getenv("AZURE_ENDPOINT"),  # e.g., "https://your-resource.openai.azure.com/"
             azure_deployment="gpt-4",
             llm_model="gpt-4",
+            azure_api_version="2024-02-15-preview",
             
-            embedding_provider="azure",
+            embedding_provider="azure_openai",
             embedding_api_key=os.getenv("AZURE_OPENAI_KEY"),
+            embedding_api_base=os.getenv("AZURE_ENDPOINT"),  # Same endpoint for embeddings
             azure_embedding_deployment="text-embedding-ada-002",
             embedding_model="text-embedding-ada-002",
             

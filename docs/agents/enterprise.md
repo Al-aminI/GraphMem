@@ -47,7 +47,7 @@ class MultiTenantAgent:
         response = memory.query(question)
         return response.answer
 
-# Usage
+# Usage with OpenAI
 base_config = {
     "llm_provider": "openai",
     "llm_api_key": "sk-...",
@@ -55,6 +55,33 @@ base_config = {
     "embedding_provider": "openai",
     "embedding_api_key": "sk-...",
     "embedding_model": "text-embedding-3-small",
+}
+
+# Or with OpenRouter (custom base URL)
+base_config_openrouter = {
+    "llm_provider": "openai_compatible",
+    "llm_api_key": "sk-or-v1-...",
+    "llm_api_base": "https://openrouter.ai/api/v1",  # Custom base URL
+    "llm_model": "google/gemini-2.0-flash-001",
+    "embedding_provider": "openai_compatible",
+    "embedding_api_key": "sk-or-v1-...",
+    "embedding_api_base": "https://openrouter.ai/api/v1",  # Custom base URL
+    "embedding_model": "openai/text-embedding-3-small",
+}
+
+# Or with Azure OpenAI
+base_config_azure = {
+    "llm_provider": "azure_openai",
+    "llm_api_key": "your-azure-key",
+    "llm_api_base": "https://your-resource.openai.azure.com/",  # Azure endpoint
+    "llm_model": "gpt-4",
+    "azure_deployment": "gpt-4",
+    "azure_api_version": "2024-02-15-preview",
+    "embedding_provider": "azure_openai",
+    "embedding_api_key": "your-azure-key",
+    "embedding_api_base": "https://your-resource.openai.azure.com/",  # Azure endpoint
+    "embedding_model": "text-embedding-ada-002",
+    "azure_embedding_deployment": "text-embedding-ada-002",
 }
 
 agent = MultiTenantAgent(base_config)
@@ -146,15 +173,19 @@ class EnterpriseKB:
     
     def __init__(self, org_id: str):
         self.config = MemoryConfig(
-            llm_provider="azure",
+            llm_provider="azure_openai",
             llm_api_key="...",
-            azure_endpoint="https://...",
+            llm_api_base="https://your-resource.openai.azure.com/",  # Azure endpoint
             azure_deployment="gpt-4",
             llm_model="gpt-4",
-            embedding_provider="azure",
+            azure_api_version="2024-02-15-preview",
+            
+            embedding_provider="azure_openai",
             embedding_api_key="...",
+            embedding_api_base="https://your-resource.openai.azure.com/",  # Azure endpoint
             azure_embedding_deployment="text-embedding-ada-002",
             embedding_model="text-embedding-ada-002",
+            
             neo4j_uri="neo4j+s://...",
             neo4j_password="...",
             redis_url="redis://...",
@@ -243,15 +274,19 @@ app = FastAPI(title="Enterprise Memory Service")
 
 # Configuration from environment
 config = MemoryConfig(
-    llm_provider="azure",
+    llm_provider="azure_openai",
     llm_api_key=os.getenv("AZURE_OPENAI_KEY"),
-    azure_endpoint=os.getenv("AZURE_ENDPOINT"),
+    llm_api_base=os.getenv("AZURE_ENDPOINT"),  # e.g., "https://your-resource.openai.azure.com/"
     azure_deployment=os.getenv("AZURE_DEPLOYMENT"),
     llm_model="gpt-4",
-    embedding_provider="azure",
+    azure_api_version="2024-02-15-preview",
+    
+    embedding_provider="azure_openai",
     embedding_api_key=os.getenv("AZURE_OPENAI_KEY"),
+    embedding_api_base=os.getenv("AZURE_ENDPOINT"),  # Same endpoint for embeddings
     azure_embedding_deployment=os.getenv("AZURE_EMBED_DEPLOYMENT"),
     embedding_model="text-embedding-ada-002",
+    
     neo4j_uri=os.getenv("NEO4J_URI"),
     neo4j_password=os.getenv("NEO4J_PASSWORD"),
     redis_url=os.getenv("REDIS_URL"),

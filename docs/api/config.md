@@ -52,10 +52,10 @@ config = MemoryConfig(
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `llm_provider` | str | Yes | Provider: "openai", "azure", "anthropic", "openai_compatible" |
+| `llm_provider` | str | Yes | Provider: "openai", "azure_openai", "anthropic", "openai_compatible", "ollama" |
 | `llm_api_key` | str | Yes | API key for the provider |
 | `llm_model` | str | Yes | Model name (e.g., "gpt-4o-mini") |
-| `llm_api_base` | str | No | Custom API base URL |
+| `llm_api_base` | str | No | Custom API base URL (for OpenRouter, Azure, local models) |
 
 ### Embedding Configuration
 
@@ -64,16 +64,18 @@ config = MemoryConfig(
 | `embedding_provider` | str | Yes | Provider for embeddings |
 | `embedding_api_key` | str | Yes | API key for embeddings |
 | `embedding_model` | str | Yes | Model (e.g., "text-embedding-3-small") |
-| `embedding_api_base` | str | No | Custom API base URL |
+| `embedding_api_base` | str | No | Custom API base URL (for OpenRouter, Azure, local models) |
 
 ### Azure Configuration
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `azure_endpoint` | str | For Azure | Azure OpenAI endpoint |
 | `azure_deployment` | str | For Azure | LLM deployment name |
 | `azure_embedding_deployment` | str | For Azure | Embedding deployment name |
-| `azure_api_version` | str | No | API version |
+| `azure_api_version` | str | No | API version (default: "2024-02-15-preview") |
+
+!!! note "Azure Base URL"
+    For Azure OpenAI, use `llm_api_base` and `embedding_api_base` to specify your Azure endpoint (e.g., `https://your-resource.openai.azure.com/`).
 
 ### Storage Configuration
 
@@ -118,13 +120,16 @@ config = MemoryConfig(
 
 ```python
 config = MemoryConfig(
-    llm_provider="azure",
+    llm_provider="azure_openai",
     llm_api_key="your-azure-key",
-    azure_endpoint="https://your-resource.openai.azure.com/",
+    llm_api_base="https://your-resource.openai.azure.com/",  # Azure endpoint
     azure_deployment="gpt-4",
     llm_model="gpt-4",
-    embedding_provider="azure",
+    azure_api_version="2024-02-15-preview",
+    
+    embedding_provider="azure_openai",
     embedding_api_key="your-azure-key",
+    embedding_api_base="https://your-resource.openai.azure.com/",  # Azure endpoint
     azure_embedding_deployment="text-embedding-ada-002",
     embedding_model="text-embedding-ada-002",
 )
@@ -136,12 +141,27 @@ config = MemoryConfig(
 config = MemoryConfig(
     llm_provider="openai_compatible",
     llm_api_key="sk-or-v1-...",
-    llm_api_base="https://openrouter.ai/api/v1",
+    llm_api_base="https://openrouter.ai/api/v1",  # Custom base URL
     llm_model="google/gemini-2.0-flash-001",
     embedding_provider="openai_compatible",
     embedding_api_key="sk-or-v1-...",
-    embedding_api_base="https://openrouter.ai/api/v1",
+    embedding_api_base="https://openrouter.ai/api/v1",  # Custom base URL
     embedding_model="openai/text-embedding-3-small",
+)
+```
+
+### Local Models (Ollama)
+
+```python
+config = MemoryConfig(
+    llm_provider="openai_compatible",
+    llm_api_key="not-needed",
+    llm_api_base="http://localhost:11434/v1",  # Ollama base URL
+    llm_model="llama3.2",
+    embedding_provider="openai_compatible",
+    embedding_api_key="not-needed",
+    embedding_api_base="http://localhost:11434/v1",  # Ollama base URL
+    embedding_model="nomic-embed-text",
 )
 ```
 
@@ -172,15 +192,17 @@ import os
 
 config = MemoryConfig(
     # LLM
-    llm_provider="azure",
+    llm_provider="azure_openai",
     llm_api_key=os.getenv("AZURE_OPENAI_KEY"),
-    azure_endpoint=os.getenv("AZURE_ENDPOINT"),
+    llm_api_base=os.getenv("AZURE_ENDPOINT"),  # e.g., "https://your-resource.openai.azure.com/"
     azure_deployment="gpt-4",
     llm_model="gpt-4",
+    azure_api_version="2024-02-15-preview",
     
     # Embeddings
-    embedding_provider="azure",
+    embedding_provider="azure_openai",
     embedding_api_key=os.getenv("AZURE_OPENAI_KEY"),
+    embedding_api_base=os.getenv("AZURE_ENDPOINT"),  # Same endpoint for embeddings
     azure_embedding_deployment="text-embedding-ada-002",
     embedding_model="text-embedding-ada-002",
     

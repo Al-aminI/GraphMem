@@ -7,7 +7,7 @@ Simple examples to get started with GraphMem.
 ```python
 from graphmem import GraphMem, MemoryConfig
 
-# Configure
+# Configure with OpenAI
 config = MemoryConfig(
     llm_provider="openai",
     llm_api_key="sk-...",
@@ -26,6 +26,51 @@ memory.ingest("Tesla is led by CEO Elon Musk. Founded in 2003.")
 # Recall
 response = memory.query("Who is the CEO of Tesla?")
 print(response.answer)  # "Elon Musk"
+```
+
+## Using Custom Base URLs
+
+For OpenRouter, Together, Groq, or local models:
+
+```python
+# OpenRouter
+config = MemoryConfig(
+    llm_provider="openai_compatible",
+    llm_api_key="sk-or-v1-...",
+    llm_api_base="https://openrouter.ai/api/v1",  # Custom base URL
+    llm_model="google/gemini-2.0-flash-001",
+    embedding_provider="openai_compatible",
+    embedding_api_key="sk-or-v1-...",
+    embedding_api_base="https://openrouter.ai/api/v1",  # Custom base URL
+    embedding_model="openai/text-embedding-3-small",
+)
+
+# Local Ollama
+config = MemoryConfig(
+    llm_provider="openai_compatible",
+    llm_api_key="not-needed",
+    llm_api_base="http://localhost:11434/v1",  # Ollama base URL
+    llm_model="llama3.2",
+    embedding_provider="openai_compatible",
+    embedding_api_key="not-needed",
+    embedding_api_base="http://localhost:11434/v1",
+    embedding_model="nomic-embed-text",
+)
+
+# Azure OpenAI
+config = MemoryConfig(
+    llm_provider="azure_openai",
+    llm_api_key="your-azure-key",
+    llm_api_base="https://your-resource.openai.azure.com/",  # Azure endpoint
+    azure_deployment="gpt-4",
+    llm_model="gpt-4",
+    azure_api_version="2024-02-15-preview",
+    embedding_provider="azure_openai",
+    embedding_api_key="your-azure-key",
+    embedding_api_base="https://your-resource.openai.azure.com/",
+    azure_embedding_deployment="text-embedding-ada-002",
+    embedding_model="text-embedding-ada-002",
+)
 ```
 
 ## Multiple Documents

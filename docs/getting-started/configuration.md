@@ -36,23 +36,44 @@ config = MemoryConfig(
 
 ```python
 config = MemoryConfig(
-    llm_provider="azure",
+    llm_provider="azure_openai",
     llm_api_key="your-azure-key",
-    azure_endpoint="https://your-resource.openai.azure.com/",
+    llm_api_base="https://your-resource.openai.azure.com/",  # Azure endpoint
     azure_deployment="gpt-4",
     llm_model="gpt-4",
     azure_api_version="2024-02-15-preview",  # Optional
 )
 ```
 
-### OpenAI-Compatible (OpenRouter, Together, etc.)
+### OpenAI-Compatible (OpenRouter, Together, Groq, etc.)
 
 ```python
 config = MemoryConfig(
     llm_provider="openai_compatible",
     llm_api_key="your-key",
-    llm_api_base="https://openrouter.ai/api/v1",
+    llm_api_base="https://openrouter.ai/api/v1",  # Custom base URL
     llm_model="google/gemini-2.0-flash-001",
+    
+    embedding_provider="openai_compatible",
+    embedding_api_key="your-key",
+    embedding_api_base="https://openrouter.ai/api/v1",  # Custom base URL
+    embedding_model="openai/text-embedding-3-small",
+)
+```
+
+### Local LLMs (Ollama, vLLM, LM Studio)
+
+```python
+config = MemoryConfig(
+    llm_provider="openai_compatible",
+    llm_api_key="not-needed",  # Local models often don't need keys
+    llm_api_base="http://localhost:11434/v1",  # Ollama
+    llm_model="llama3.2",
+    
+    embedding_provider="openai_compatible",
+    embedding_api_key="not-needed",
+    embedding_api_base="http://localhost:11434/v1",
+    embedding_model="nomic-embed-text",
 )
 ```
 
@@ -82,10 +103,12 @@ config = MemoryConfig(
 
 ```python
 config = MemoryConfig(
-    embedding_provider="azure",
+    embedding_provider="azure_openai",
     embedding_api_key="your-azure-key",
+    embedding_api_base="https://your-resource.openai.azure.com/",  # Azure endpoint
     azure_embedding_deployment="text-embedding-ada-002",
     embedding_model="text-embedding-ada-002",
+    azure_api_version="2024-02-15-preview",  # Optional
 )
 ```
 
@@ -169,10 +192,11 @@ memory = GraphMem(
 | `llm_provider` | str | Required | LLM provider name |
 | `llm_api_key` | str | Required | API key for LLM |
 | `llm_model` | str | Required | Model name |
-| `llm_api_base` | str | None | Custom API base URL |
+| `llm_api_base` | str | None | Custom LLM API base URL (for OpenRouter, Together, local models) |
 | `embedding_provider` | str | Required | Embedding provider |
 | `embedding_api_key` | str | Required | API key for embeddings |
 | `embedding_model` | str | Required | Embedding model name |
+| `embedding_api_base` | str | None | Custom embedding API base URL (for OpenRouter, Together, local models) |
 | `azure_endpoint` | str | None | Azure OpenAI endpoint |
 | `azure_deployment` | str | None | Azure LLM deployment |
 | `azure_embedding_deployment` | str | None | Azure embedding deployment |
