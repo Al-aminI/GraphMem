@@ -8,25 +8,59 @@ Get GraphMem running in 5 minutes.
 pip install agentic-graph-mem
 ```
 
+For persistent storage (recommended):
+```bash
+pip install "agentic-graph-mem[libsql]"
+```
+
 ## Step 2: Configure
 
-```python
-from graphmem import GraphMem, MemoryConfig
+!!! warning "Important: Enable Persistence!"
+    By default, GraphMem uses **in-memory storage** (data is lost on restart). Add `turso_db_path` to persist your data!
 
-config = MemoryConfig(
-    # LLM for extraction and querying
-    llm_provider="openai",
-    llm_api_key="sk-...",  # Your OpenAI API key
-    llm_model="gpt-4o-mini",
-    
-    # Embeddings for semantic search
-    embedding_provider="openai",
-    embedding_api_key="sk-...",
-    embedding_model="text-embedding-3-small",
-)
+=== "With Persistence (Recommended)"
 
-memory = GraphMem(config)
-```
+    ```python
+    from graphmem import GraphMem, MemoryConfig
+
+    config = MemoryConfig(
+        # LLM for extraction and querying
+        llm_provider="openai",
+        llm_api_key="sk-...",
+        llm_model="gpt-4o-mini",
+        
+        # Embeddings for semantic search
+        embedding_provider="openai",
+        embedding_api_key="sk-...",
+        embedding_model="text-embedding-3-small",
+        
+        # ✅ PERSISTENCE: Data survives restarts!
+        turso_db_path="my_agent_memory.db",
+    )
+
+    memory = GraphMem(config)
+    ```
+
+=== "In-Memory Only (Dev/Testing)"
+
+    ```python
+    from graphmem import GraphMem, MemoryConfig
+
+    config = MemoryConfig(
+        # LLM for extraction and querying
+        llm_provider="openai",
+        llm_api_key="sk-...",
+        llm_model="gpt-4o-mini",
+        
+        # Embeddings for semantic search
+        embedding_provider="openai",
+        embedding_api_key="sk-...",
+        embedding_model="text-embedding-3-small",
+        # ⚠️ No turso_db_path = data lost on restart!
+    )
+
+    memory = GraphMem(config)
+    ```
 
 ## Step 3: Learn (Ingest)
 
@@ -69,7 +103,7 @@ memory.evolve()
 ```python
 from graphmem import GraphMem, MemoryConfig
 
-# Configure
+# Configure with persistence
 config = MemoryConfig(
     llm_provider="openai",
     llm_api_key="sk-...",
@@ -77,10 +111,13 @@ config = MemoryConfig(
     embedding_provider="openai",
     embedding_api_key="sk-...",
     embedding_model="text-embedding-3-small",
+    
+    # ✅ Enable persistence (REQUIRED for production!)
+    turso_db_path="my_agent_memory.db",
 )
 
-# Initialize
-memory = GraphMem(config)
+# Initialize with a consistent memory_id to find your data again
+memory = GraphMem(config, memory_id="my_agent")
 
 # Learn
 memory.ingest("Tesla is led by CEO Elon Musk. Founded in 2003.")
@@ -99,7 +136,22 @@ print(f"Confidence: {response.confidence}")
 events = memory.evolve()
 for event in events:
     print(f"{event.evolution_type}: {event.description}")
+
+# Close when done (ensures data is synced)
+memory.close()
 ```
+
+!!! tip "Use `memory_id` for Consistent Access"
+    Always provide a `memory_id` when creating `GraphMem` to find your data again:
+    ```python
+    # First session
+    memory = GraphMem(config, memory_id="my_agent")
+    memory.ingest("...")
+    
+    # Later session - same memory_id loads your data!
+    memory = GraphMem(config, memory_id="my_agent")
+    response = memory.query("...")  # Finds your previously ingested data
+    ```
 
 ---
 
@@ -121,6 +173,9 @@ for event in events:
         embedding_api_base="https://your-resource.openai.azure.com/",
         azure_embedding_deployment="text-embedding-ada-002",
         embedding_model="text-embedding-ada-002",
+        
+        # ✅ Don't forget persistence!
+        turso_db_path="my_agent_memory.db",
     )
     ```
 
@@ -130,13 +185,16 @@ for event in events:
     config = MemoryConfig(
         llm_provider="openai_compatible",
         llm_api_key="sk-or-v1-...",
-        llm_api_base="https://openrouter.ai/api/v1",  # Custom base URL
+        llm_api_base="https://openrouter.ai/api/v1",
         llm_model="google/gemini-2.0-flash-001",
         
         embedding_provider="openai_compatible",
         embedding_api_key="sk-or-v1-...",
-        embedding_api_base="https://openrouter.ai/api/v1",  # Custom base URL
+        embedding_api_base="https://openrouter.ai/api/v1",
         embedding_model="openai/text-embedding-3-small",
+        
+        # ✅ Don't forget persistence!
+        turso_db_path="my_agent_memory.db",
     )
     ```
 
@@ -146,13 +204,16 @@ for event in events:
     config = MemoryConfig(
         llm_provider="openai_compatible",
         llm_api_key="not-needed",
-        llm_api_base="http://localhost:11434/v1",  # Ollama base URL
+        llm_api_base="http://localhost:11434/v1",
         llm_model="llama3.2",
         
         embedding_provider="openai_compatible",
         embedding_api_key="not-needed",
-        embedding_api_base="http://localhost:11434/v1",  # Ollama base URL
+        embedding_api_base="http://localhost:11434/v1",
         embedding_model="nomic-embed-text",
+        
+        # ✅ Don't forget persistence!
+        turso_db_path="my_agent_memory.db",
     )
     ```
 
@@ -164,32 +225,38 @@ for event in events:
         llm_api_key="sk-ant-...",
         llm_model="claude-3-5-sonnet-20241022",
         
-        # Still need OpenAI for embeddings
         embedding_provider="openai",
         embedding_api_key="sk-...",
         embedding_model="text-embedding-3-small",
+        
+        # ✅ Don't forget persistence!
+        turso_db_path="my_agent_memory.db",
     )
     ```
 
 ---
 
-## Adding Persistence
+## Adding Cloud Sync (Optional)
 
-By default, GraphMem uses in-memory storage. Add persistence with Turso:
+For backup and multi-device sync, add Turso Cloud credentials:
 
 ```python
 config = MemoryConfig(
     # ... LLM config ...
     
-    # Add persistence
+    # Local persistence (REQUIRED)
     turso_db_path="my_agent_memory.db",
+    
+    # Cloud sync (OPTIONAL - for backup & multi-device)
+    turso_url="libsql://your-db.turso.io",
+    turso_auth_token="your-token",
 )
-
-memory = GraphMem(config)
-
-# Data now persists between restarts!
-memory.ingest("Important information...")
 ```
+
+!!! info "How it works"
+    - `turso_db_path` creates a local SQLite file (always fast, works offline)
+    - `turso_url` + `turso_auth_token` enable automatic cloud sync
+    - Data is read/written locally first, then synced to cloud
 
 ---
 

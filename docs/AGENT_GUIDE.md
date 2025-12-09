@@ -60,10 +60,17 @@ GraphMem provides the memory layer that transforms stateless LLMs into intellige
 ### Installation
 
 ```bash
+# Core (in-memory only - for testing)
 pip install agentic-graph-mem
+
+# With persistence (RECOMMENDED for production)
+pip install "agentic-graph-mem[libsql]"
 ```
 
 ### Your First Memory-Enabled Agent
+
+!!! warning "Important: Enable Persistence!"
+    Without `turso_db_path`, your agent forgets everything on restart!
 
 ```python
 from graphmem import GraphMem, MemoryConfig
@@ -80,7 +87,7 @@ config = MemoryConfig(
     embedding_api_key="sk-...",
     embedding_model="text-embedding-3-small",
     
-    # Persistent storage (optional but recommended)
+    # ✅ CRITICAL: Persistent storage!
     turso_db_path="agent_memory.db",
     
     # Enable self-evolution
@@ -88,8 +95,8 @@ config = MemoryConfig(
     auto_evolve=True,  # Evolve after each ingestion
 )
 
-# Create memory instance
-memory = GraphMem(config)
+# Create memory instance with a consistent memory_id
+memory = GraphMem(config, memory_id="my_agent")
 
 # Your agent can now remember!
 class SimpleAgent:

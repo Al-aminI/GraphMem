@@ -2,12 +2,15 @@
 
 Simple examples to get started with GraphMem.
 
-## Hello World
+!!! warning "Enable Persistence!"
+    By default, GraphMem uses **in-memory storage**. Add `turso_db_path` to persist your data between restarts!
+
+## Hello World (with Persistence)
 
 ```python
 from graphmem import GraphMem, MemoryConfig
 
-# Configure with OpenAI
+# Configure with OpenAI + Persistence
 config = MemoryConfig(
     llm_provider="openai",
     llm_api_key="sk-...",
@@ -15,10 +18,13 @@ config = MemoryConfig(
     embedding_provider="openai",
     embedding_api_key="sk-...",
     embedding_model="text-embedding-3-small",
+    
+    # ✅ IMPORTANT: Enable persistence!
+    turso_db_path="my_agent_memory.db",
 )
 
-# Initialize
-memory = GraphMem(config)
+# Initialize with a memory_id to find your data again
+memory = GraphMem(config, memory_id="my_agent")
 
 # Learn
 memory.ingest("Tesla is led by CEO Elon Musk. Founded in 2003.")
@@ -26,6 +32,8 @@ memory.ingest("Tesla is led by CEO Elon Musk. Founded in 2003.")
 # Recall
 response = memory.query("Who is the CEO of Tesla?")
 print(response.answer)  # "Elon Musk"
+
+# Data survives restarts!
 ```
 
 ## Using Custom Base URLs
@@ -37,31 +45,33 @@ For OpenRouter, Together, Groq, or local models:
 config = MemoryConfig(
     llm_provider="openai_compatible",
     llm_api_key="sk-or-v1-...",
-    llm_api_base="https://openrouter.ai/api/v1",  # Custom base URL
+    llm_api_base="https://openrouter.ai/api/v1",
     llm_model="google/gemini-2.0-flash-001",
     embedding_provider="openai_compatible",
     embedding_api_key="sk-or-v1-...",
-    embedding_api_base="https://openrouter.ai/api/v1",  # Custom base URL
+    embedding_api_base="https://openrouter.ai/api/v1",
     embedding_model="openai/text-embedding-3-small",
+    turso_db_path="my_agent_memory.db",  # ✅ Don't forget persistence!
 )
 
 # Local Ollama
 config = MemoryConfig(
     llm_provider="openai_compatible",
     llm_api_key="not-needed",
-    llm_api_base="http://localhost:11434/v1",  # Ollama base URL
+    llm_api_base="http://localhost:11434/v1",
     llm_model="llama3.2",
     embedding_provider="openai_compatible",
     embedding_api_key="not-needed",
     embedding_api_base="http://localhost:11434/v1",
     embedding_model="nomic-embed-text",
+    turso_db_path="my_agent_memory.db",  # ✅ Don't forget persistence!
 )
 
 # Azure OpenAI
 config = MemoryConfig(
     llm_provider="azure_openai",
     llm_api_key="your-azure-key",
-    llm_api_base="https://your-resource.openai.azure.com/",  # Azure endpoint
+    llm_api_base="https://your-resource.openai.azure.com/",
     azure_deployment="gpt-4",
     llm_model="gpt-4",
     azure_api_version="2024-02-15-preview",
@@ -70,6 +80,7 @@ config = MemoryConfig(
     embedding_api_base="https://your-resource.openai.azure.com/",
     azure_embedding_deployment="text-embedding-ada-002",
     embedding_model="text-embedding-ada-002",
+    turso_db_path="my_agent_memory.db",  # ✅ Don't forget persistence!
 )
 ```
 
@@ -86,12 +97,12 @@ response = memory.query("What companies does Elon Musk lead?")
 print(response.answer)  # "Tesla, SpaceX, and Neuralink"
 ```
 
-## With Persistence
+## With Persistence + Cloud Sync
 
 ```python
 from graphmem import GraphMem, MemoryConfig
 
-# Configure with Turso for persistence
+# Local persistence only
 config = MemoryConfig(
     llm_provider="openai",
     llm_api_key="sk-...",
@@ -99,14 +110,40 @@ config = MemoryConfig(
     embedding_provider="openai",
     embedding_api_key="sk-...",
     embedding_model="text-embedding-3-small",
+    
+    # ✅ REQUIRED for persistence
     turso_db_path="my_memory.db",
 )
 
-memory = GraphMem(config)
+# Local + Cloud sync (for backup & multi-device)
+config = MemoryConfig(
+    llm_provider="openai",
+    llm_api_key="sk-...",
+    llm_model="gpt-4o-mini",
+    embedding_provider="openai",
+    embedding_api_key="sk-...",
+    embedding_model="text-embedding-3-small",
+    
+    # ✅ Local file (REQUIRED)
+    turso_db_path="my_memory.db",
+    
+    # ✅ Cloud sync (OPTIONAL - for backup)
+    turso_url="libsql://your-db.turso.io",
+    turso_auth_token="your-token",
+)
 
-# Data persists between restarts!
+# Always use a consistent memory_id!
+memory = GraphMem(config, memory_id="my_agent")
+
+# Data persists between restarts AND syncs to cloud!
 memory.ingest("Important information...")
 ```
+
+!!! tip "How Turso Persistence Works"
+    - `turso_db_path` creates a **local SQLite file** (~1ms reads)
+    - `turso_url` + `turso_auth_token` enable **automatic cloud sync**
+    - Data is always read/written locally first (fast, works offline)
+    - Cloud sync happens automatically in the background
 
 ## With Evolution
 

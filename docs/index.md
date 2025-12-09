@@ -71,9 +71,12 @@ GraphMem implements the **four pillars of human memory**:
         embedding_provider="openai",
         embedding_api_key="sk-...",
         embedding_model="text-embedding-3-small",
+        
+        # ⚠️ Add this for data to survive restarts!
+        turso_db_path="my_agent_memory.db",
     )
 
-    memory = GraphMem(config)
+    memory = GraphMem(config, memory_id="my_agent")
 
     # That's it. 3 methods:
     memory.ingest("Tesla is led by CEO Elon Musk...")  # ← Extract knowledge
