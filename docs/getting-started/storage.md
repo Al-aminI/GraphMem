@@ -71,7 +71,7 @@ memory = GraphMem(config)
 
 ## Turso (SQLite) - Recommended
 
-SQLite-based persistence with optional cloud sync.
+SQLite-based persistence with optional cloud sync. Turso uses an **offline-first architecture** where all data is stored locally with optional cloud synchronization.
 
 ### Installation
 
@@ -79,7 +79,37 @@ SQLite-based persistence with optional cloud sync.
 pip install "agentic-graph-mem[libsql]"
 ```
 
-### Local File
+### How Turso Storage Works
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    TURSO ARCHITECTURE                            │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│   LOCAL SQLITE FILE (REQUIRED)          TURSO CLOUD (OPTIONAL)  │
+│   ─────────────────────────────         ────────────────────    │
+│                                                                  │
+│   ┌─────────────────────┐               ┌─────────────────────┐ │
+│   │  my_agent.db        │    ◄─────►    │  Turso Cloud        │ │
+│   │                     │     SYNC      │                     │ │
+│   │  • All reads/writes │               │  • Backup           │ │
+│   │  • ~1ms latency     │               │  • Multi-device     │ │
+│   │  • Works offline    │               │  • Team sharing     │ │
+│   └─────────────────────┘               └─────────────────────┘ │
+│                                                                  │
+│   turso_db_path="my_agent.db"           turso_url="libsql://..."│
+│   (REQUIRED)                            turso_auth_token="..."  │
+│                                         (OPTIONAL)              │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+!!! warning "Important: `turso_db_path` is REQUIRED"
+    You **must** provide `turso_db_path` for Turso to be used. Just providing `turso_url` and `turso_auth_token` without `turso_db_path` will **NOT** enable Turso storage - it will fall back to InMemory!
+
+### Local-Only Mode
+
+For local persistence without cloud sync:
 
 ```python
 config = MemoryConfig(
@@ -90,32 +120,76 @@ config = MemoryConfig(
     embedding_api_key="sk-...",
     embedding_model="text-embedding-3-small",
     
-    # Just add a file path!
+    # ✅ REQUIRED: Local SQLite file path
     turso_db_path="my_agent_memory.db",
 )
 
 memory = GraphMem(config)
+# Data persists in my_agent_memory.db
 ```
 
-### With Cloud Sync
+### With Cloud Sync (Recommended for Production)
+
+For local persistence **plus** automatic cloud backup and multi-device sync:
 
 ```python
 config = MemoryConfig(
-    # ... LLM config ...
+    llm_provider="openai",
+    llm_api_key="sk-...",
+    llm_model="gpt-4o-mini",
+    embedding_provider="openai",
+    embedding_api_key="sk-...",
+    embedding_model="text-embedding-3-small",
     
-    # Local file with cloud backup
+    # ✅ REQUIRED: Local SQLite file (always created)
     turso_db_path="my_agent_memory.db",
-    turso_url="https://your-db.turso.io",
-    turso_auth_token="your-token",
+    
+    # ✅ OPTIONAL: Cloud sync (syncs local ↔ cloud)
+    turso_url="libsql://your-db-name.turso.io",
+    turso_auth_token="eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9...",
 )
+
+memory = GraphMem(config)
+# Data stored locally AND synced to cloud
 ```
 
+### Sync Behavior
+
+| Configuration | Behavior |
+|---------------|----------|
+| `turso_db_path` only | Local SQLite only, no cloud sync |
+| `turso_db_path` + `turso_url` + `turso_auth_token` | Local SQLite syncs bidirectionally with Turso Cloud |
+| `turso_url` + `turso_auth_token` only (NO `turso_db_path`) | ⚠️ **Turso NOT used!** Falls back to InMemory |
+
+### Benefits of Cloud Sync
+
+| Feature | Local Only | With Cloud Sync |
+|---------|-----------|-----------------|
+| Persistence | ✅ | ✅ |
+| Works offline | ✅ | ✅ |
+| Backup | ❌ Manual | ✅ Automatic |
+| Multi-device | ❌ | ✅ |
+| Team sharing | ❌ | ✅ |
+| Disaster recovery | ❌ | ✅ |
+
+### Setting Up Turso Cloud
+
+1. **Create account**: [turso.tech](https://turso.tech)
+2. **Install CLI**: `curl -sSfL https://get.tur.so/install.sh | bash`
+3. **Create database**:
+   ```bash
+   turso db create graphmem
+   turso db show graphmem --url  # Get your turso_url
+   turso db tokens create graphmem  # Get your turso_auth_token
+   ```
+
 !!! success "Why Turso?"
-    - ✅ Data survives restarts
-    - ✅ Works offline
+    - ✅ Data survives restarts (local SQLite)
+    - ✅ Works completely offline
     - ✅ No server to manage
     - ✅ Native vector search (~10ms)
-    - ✅ Optional cloud sync
+    - ✅ Optional cloud sync for backup/multi-device
+    - ✅ Offline-first: Cloud is enhancement, not requirement
 
 ---
 

@@ -124,16 +124,24 @@ config = MemoryConfig(
 
 ### Turso (SQLite Persistence)
 
+!!! warning "Important"
+    `turso_db_path` is **required** to enable Turso. Just providing `turso_url` without `turso_db_path` will NOT use Turso!
+
 ```python
+# Local-only (no cloud sync)
 config = MemoryConfig(
-    # Local file (recommended for most users)
-    turso_db_path="my_memory.db",
-    
-    # Optional: Cloud sync
-    # turso_url="https://your-db.turso.io",
-    # turso_auth_token="your-token",
+    turso_db_path="my_memory.db",  # ✅ REQUIRED - local SQLite file
+)
+
+# With cloud sync (local + cloud backup)
+config = MemoryConfig(
+    turso_db_path="my_memory.db",  # ✅ REQUIRED - local SQLite file
+    turso_url="libsql://your-db.turso.io",  # Optional - cloud sync URL
+    turso_auth_token="your-token",  # Optional - cloud auth token
 )
 ```
+
+Turso uses an **offline-first architecture**: all data is stored locally, with optional cloud sync for backup and multi-device access. See [Storage Backends](storage.md) for details.
 
 ### Neo4j
 
@@ -201,9 +209,9 @@ memory = GraphMem(
 | `azure_deployment` | str | None | Azure LLM deployment |
 | `azure_embedding_deployment` | str | None | Azure embedding deployment |
 | `azure_api_version` | str | "2024-02-15-preview" | Azure API version |
-| `turso_db_path` | str | None | Local SQLite path |
-| `turso_url` | str | None | Turso cloud URL |
-| `turso_auth_token` | str | None | Turso auth token |
+| `turso_db_path` | str | None | **Required for Turso** - Local SQLite file path |
+| `turso_url` | str | None | Optional - Turso cloud URL for sync (requires `turso_db_path`) |
+| `turso_auth_token` | str | None | Optional - Turso auth token (requires `turso_url`) |
 | `neo4j_uri` | str | None | Neo4j connection URI |
 | `neo4j_username` | str | None | Neo4j username |
 | `neo4j_password` | str | None | Neo4j password |
