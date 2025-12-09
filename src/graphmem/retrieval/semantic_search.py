@@ -14,6 +14,14 @@ import numpy as np
 
 from graphmem.core.memory_types import MemoryNode, MemoryEdge
 
+
+def _get_importance_value(importance) -> float:
+    """Safely get numeric value from importance (enum or float)."""
+    if hasattr(importance, 'value'):
+        return importance.value
+    return float(importance) if importance is not None else 0.5
+
+
 if TYPE_CHECKING:
     from graphmem.stores.neo4j_store import Neo4jStore
 
@@ -228,12 +236,13 @@ class SemanticSearch:
                     
                     # Skip nodes that have decayed too much (EPHEMERAL = 0)
                     # Evolution's decay feature marks unimportant nodes
-                    if node.importance.value == 0:  # EPHEMERAL - skip decayed nodes
+                    importance_val = _get_importance_value(node.importance)
+                    if importance_val == 0:  # EPHEMERAL - skip decayed nodes
                         continue
                     
                     # Weight similarity by importance (evolution matters!)
                     # importance.value: CRITICAL=10, VERY_HIGH=8, HIGH=6, MEDIUM=5, LOW=3, VERY_LOW=1
-                    importance_weight = node.importance.value / 10.0  # Normalize to 0-1
+                    importance_weight = importance_val / 10.0  # Normalize to 0-1
                     
                     # Recency boost - recently accessed nodes are more relevant
                     recency_boost = 0.0
@@ -437,7 +446,7 @@ class SemanticSearch:
                 if node.entity_type.lower() != value.lower():
                     return False
             elif key == "min_importance":
-                if node.importance.value < value:
+                if _get_importance_value(node.importance) < value:
                     return False
             elif key == "state":
                 if node.state.name != value:

@@ -420,7 +420,7 @@ class GraphMem:
                 if not use_turso:
                     self._graph_store = InMemoryStore()
         
-        if use_turso and not hasattr(self, '_graph_store'):
+        if use_turso and self._graph_store is None:
             try:
                 from graphmem.stores.turso_store import TursoStore, TURSO_AVAILABLE
                 if TURSO_AVAILABLE:
@@ -437,7 +437,7 @@ class GraphMem:
                 logger.warning(f"Turso unavailable, falling back to in-memory: {e}")
                 self._graph_store = InMemoryStore()
         
-        if not hasattr(self, '_graph_store') or self._graph_store is None:
+        if self._graph_store is None:
             self._graph_store = InMemoryStore()
             logger.info("Using in-memory storage (set neo4j_uri or turso_db_path for persistence)")
         

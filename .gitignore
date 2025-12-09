@@ -84,9 +84,13 @@ PAPER.md
 eval_graphmem.db_cache.db
 eval_graphmem.db
 *.db
+*.db-*
 evaluation/results/
-*.db
 synthetic_results*.json
 final_results.json
 benchmark_reference/
 evaluation/data/memory_agent_bench_sample.json
+
+# Test files with credentials
+test_persistence_full.py
+test_turso_reuse.py

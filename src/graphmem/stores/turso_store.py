@@ -333,7 +333,7 @@ class TursoStore:
                 memory.id,
                 getattr(memory, 'user_id', None),
                 cluster.summary,
-                json.dumps(list(cluster.entity_ids)),
+                json.dumps(list(cluster.entities if hasattr(cluster, 'entities') else cluster.entity_ids)),
                 json.dumps(cluster.metadata) if cluster.metadata else None
             ))
         
@@ -451,9 +451,8 @@ class TursoStore:
         for row in cursor.fetchall():
             cluster = MemoryCluster(
                 id=row[0],
-                entity_ids=set(json.loads(row[4])) if row[4] else set(),
+                entities=json.loads(row[4]) if row[4] else [],
                 summary=row[3],
-                metadata=json.loads(row[5]) if row[5] else {},
             )
             clusters[row[0]] = cluster
         
