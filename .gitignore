@@ -94,3 +94,7 @@ evaluation/data/memory_agent_bench_sample.json
 # Test files with credentials
 test_persistence_full.py
 test_turso_reuse.py
+
+# Local configuration with secrets
+local_config.py
+*.local.py
