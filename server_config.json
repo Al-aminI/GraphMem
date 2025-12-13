@@ -1,0 +1,20 @@
+{
+  "llm_provider": "azure_openai",
+  "llm_api_key": "YOUR_API_KEY",
+  "llm_api_base": "https://your-endpoint.openai.azure.com/",
+  "llm_model": "gpt-4.1-mini",
+  
+  "embedding_provider": "azure_openai",
+  "embedding_api_key": "YOUR_API_KEY",
+  "embedding_api_base": "https://your-endpoint.openai.azure.com/",
+  "embedding_model": "text-embedding-3-small",
+  
+  "turso_db_path": "graphmem_local.db",
+  "turso_url": "libsql://your-db.turso.io",
+  "turso_auth_token": "YOUR_TURSO_TOKEN",
+  
+  "memory_id": "benchmark-memory",
+  "user_id": "benchmark-user",
+  "model_name": "graphmem-turso"
+}
+

@@ -97,6 +97,17 @@ except ImportError:
     TursoStore = None
     TursoCache = None
 
+# OpenAI-Compatible Server (optional import)
+try:
+    from graphmem.openai_server.server import create_app, run_server
+    from graphmem.openai_server.serving_engine import GraphMemServingEngine
+    OPENAI_SERVER_AVAILABLE = True
+except ImportError:
+    create_app = None
+    run_server = None
+    GraphMemServingEngine = None
+    OPENAI_SERVER_AVAILABLE = False
+
 __all__ = [
     # Version
     "__version__",
@@ -151,4 +162,9 @@ __all__ = [
     "InMemoryCache",
     "TursoStore",
     "TursoCache",
+    # OpenAI Server
+    "create_app",
+    "run_server",
+    "GraphMemServingEngine",
+    "OPENAI_SERVER_AVAILABLE",
 ]
