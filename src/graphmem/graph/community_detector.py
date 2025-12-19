@@ -20,6 +20,13 @@ from graphmem.core.memory_types import (
 logger = logging.getLogger(__name__)
 
 
+def _get_importance_value(importance) -> float:
+    """Safely get numeric value from importance (enum or float)."""
+    if hasattr(importance, 'value'):
+        return importance.value
+    return float(importance) if importance is not None else 5.0
+
+
 class CommunityDetector:
     """
     Detects communities in knowledge graphs using graph algorithms.
@@ -138,12 +145,13 @@ class CommunityDetector:
             coherence = self._calculate_coherence(G, community)
             density = self._calculate_density(G, community)
             
-            # Determine importance from nodes (use .value for comparison)
+            # Determine importance from nodes (handle both enum and float)
             if community_nodes:
-                importance = max(
+                max_node = max(
                     community_nodes,
-                    key=lambda n: n.importance.value,
-                ).importance
+                    key=lambda n: _get_importance_value(n.importance),
+                )
+                importance = max_node.importance
             else:
                 importance = MemoryImportance.MEDIUM
             

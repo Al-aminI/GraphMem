@@ -25,6 +25,13 @@ from graphmem.evolution.importance_scorer import ImportanceScorer
 logger = logging.getLogger(__name__)
 
 
+def _get_importance_value(importance) -> float:
+    """Safely get numeric value from importance (enum or float)."""
+    if hasattr(importance, 'value'):
+        return importance.value
+    return float(importance) if importance is not None else 5.0
+
+
 class MemoryDecay:
     """
     Handles memory decay (forgetting) over time.
@@ -332,7 +339,7 @@ OUTPUT:"""
         
         # Archive nodes
         for node_id in nodes_to_archive:
-            if memory.nodes[node_id].importance.value >= self.min_importance_to_keep.value:
+            if _get_importance_value(memory.nodes[node_id].importance) >= _get_importance_value(self.min_importance_to_keep):
                 continue  # Don't archive if importance is high enough
             
             before_state = memory.nodes[node_id].to_dict()
@@ -351,7 +358,7 @@ OUTPUT:"""
         
         # Delete nodes (soft delete)
         for node_id in nodes_to_delete:
-            if memory.nodes[node_id].importance.value >= self.min_importance_to_keep.value:
+            if _get_importance_value(memory.nodes[node_id].importance) >= _get_importance_value(self.min_importance_to_keep):
                 continue
             
             before_state = memory.nodes[node_id].to_dict()
@@ -458,7 +465,7 @@ OUTPUT:"""
         age_days = age.total_seconds() / 86400
         
         # Importance modifier (higher importance = slower decay)
-        importance_factor = 0.5 + (node.importance.value / 20.0)  # 0.5 to 1.0
+        importance_factor = 0.5 + (_get_importance_value(node.importance) / 20.0)  # 0.5 to 1.0
         
         # Access count modifier (more access = slower decay)
         access_factor = min(1.0, 0.5 + math.log(1 + node.access_count) / 10)

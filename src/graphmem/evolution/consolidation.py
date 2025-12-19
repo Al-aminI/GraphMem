@@ -25,6 +25,13 @@ from graphmem.core.memory_types import (
 logger = logging.getLogger(__name__)
 
 
+def _get_importance_value(importance) -> float:
+    """Safely get numeric value from importance (enum or float)."""
+    if hasattr(importance, 'value'):
+        return importance.value
+    return float(importance) if importance is not None else 5.0
+
+
 # LLM prompt for entity consolidation
 ENTITY_CONSOLIDATION_PROMPT = """You are an expert at identifying when different names refer to the SAME entity.
 
@@ -478,7 +485,7 @@ Answer ONLY with "YES" (same entity) or "NO" (different entities):"""
             if node.description:
                 all_descriptions.add(node.description)
             total_access += node.access_count
-            if node.importance.value > highest_importance.value:
+            if _get_importance_value(node.importance) > _get_importance_value(highest_importance):
                 highest_importance = node.importance
         
         # Create merged node (preserving user_id for multi-tenant isolation)

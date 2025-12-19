@@ -18,7 +18,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, Optional, List, Any
 
-from graphmem.core.memory_types import Memory, MemoryNode, MemoryEdge, MemoryCluster
+from graphmem.core.memory_types import Memory, MemoryNode, MemoryEdge, MemoryCluster, MemoryImportance
 
 logger = logging.getLogger(__name__)
 
@@ -384,12 +384,19 @@ class TursoStore:
                 num_floats = len(embedding_blob) // 4
                 embedding = list(struct.unpack(f'{num_floats}f', embedding_blob))
             
+            # Convert raw importance value to MemoryImportance enum
+            importance_val = row[6] if row[6] is not None else 5
+            try:
+                importance = MemoryImportance(int(importance_val))
+            except (ValueError, TypeError):
+                importance = MemoryImportance.MEDIUM
+            
             node = MemoryNode(
                 id=row[0],
                 name=row[3],
                 entity_type=row[4],
                 description=row[5],
-                importance=row[6] or 0.5,
+                importance=importance,
                 access_count=row[7] or 0,
                 accessed_at=datetime.fromisoformat(row[8]) if row[8] else datetime.utcnow(),
                 created_at=datetime.fromisoformat(row[9]) if row[9] else datetime.utcnow(),

@@ -19,6 +19,13 @@ from graphmem.core.exceptions import StorageError
 
 logger = logging.getLogger(__name__)
 
+
+def _get_importance_value(importance) -> float:
+    """Safely get numeric value from importance (enum or float)."""
+    if hasattr(importance, 'value'):
+        return importance.value
+    return float(importance) if importance is not None else 5.0
+
 # Default embedding dimensions for common models
 EMBEDDING_DIMENSIONS = {
     "text-embedding-3-small": 1536,
@@ -140,7 +147,7 @@ class Neo4jStore:
                 "id": memory.id,
                 "name": memory.name,
                 "description": memory.description,
-                "importance": memory.importance.value,
+                "importance": _get_importance_value(memory.importance),
                 "state": memory.state.name,
                 "version": memory.version,
                 "created_at": memory.created_at.isoformat(),
@@ -176,7 +183,7 @@ class Neo4jStore:
                     "canonical_name": n.canonical_name,
                     "aliases": list(n.aliases),
                     "properties": json.dumps(n.properties),
-                    "importance": n.importance.value,
+                    "importance": _get_importance_value(n.importance),
                     "state": n.state.name,
                     "access_count": n.access_count,
                     "created_at": n.created_at.isoformat(),
@@ -232,7 +239,7 @@ class Neo4jStore:
                     "weight": e.weight,
                     "confidence": e.confidence,
                     "properties": json.dumps(e.properties),
-                    "importance": e.importance.value,
+                    "importance": _get_importance_value(e.importance),
                     "state": e.state.name,
                     # Temporal validity interval [valid_from, valid_until]
                     "valid_from": e.valid_from.isoformat() if e.valid_from else None,
@@ -283,7 +290,7 @@ class Neo4jStore:
                     "id": cluster.id,
                     "summary": cluster.summary,
                     "entities": cluster.entities,
-                    "importance": cluster.importance.value,
+                    "importance": _get_importance_value(cluster.importance),
                     "coherence_score": cluster.coherence_score,
                     "density": cluster.density,
                     "updated_at": datetime.utcnow().isoformat(),
@@ -856,7 +863,7 @@ class Neo4jStore:
                 )
                 
                 # Skip EPHEMERAL (fully decayed) nodes
-                if node.importance.value == 0:
+                if _get_importance_value(node.importance) == 0:
                     continue
                 
                 nodes_with_scores.append((node, combined_score))

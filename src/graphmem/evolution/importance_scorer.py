@@ -30,6 +30,13 @@ from graphmem.core.memory_types import (
 logger = logging.getLogger(__name__)
 
 
+def _get_importance_value(importance) -> float:
+    """Safely get numeric value from importance (enum or float)."""
+    if hasattr(importance, 'value'):
+        return importance.value
+    return float(importance) if importance is not None else 5.0
+
+
 class ImportanceScorer:
     """
     Scores memory elements based on multiple factors including PageRank.
@@ -112,7 +119,7 @@ class ImportanceScorer:
         f3_pagerank = self._pagerank_score(node.id, all_nodes, all_edges)
         
         # f4: User/explicit importance (0-1)
-        f4_user = node.importance.value / 10.0
+        f4_user = _get_importance_value(node.importance) / 10.0
         
         # Weighted combination (Equation 7 in paper)
         score = (
@@ -246,8 +253,8 @@ class ImportanceScorer:
         node_factor = 0.5
         if source_node and target_node:
             node_factor = (
-                source_node.importance.value / 10.0 +
-                target_node.importance.value / 10.0
+                _get_importance_value(source_node.importance) / 10.0 +
+                _get_importance_value(target_node.importance) / 10.0
             ) / 2
         
         # Combine factors

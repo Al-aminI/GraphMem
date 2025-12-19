@@ -17,6 +17,13 @@ from graphmem.core.memory_types import MemoryNode, MemoryEdge, MemoryCluster
 logger = logging.getLogger(__name__)
 
 
+def _get_importance_value(importance) -> float:
+    """Safely get numeric value from importance (enum or float)."""
+    if hasattr(importance, 'value'):
+        return importance.value
+    return float(importance) if importance is not None else 5.0
+
+
 @dataclass
 class ContextWindow:
     """Represents a constructed context window."""
@@ -255,7 +262,7 @@ class ContextEngine:
         # Sort by importance
         sorted_communities = sorted(
             communities,
-            key=lambda c: c.importance.value,
+            key=lambda c: _get_importance_value(c.importance),
             reverse=True,
         )
         
@@ -285,7 +292,7 @@ class ContextEngine:
         # Sort by importance
         sorted_entities = sorted(
             entities,
-            key=lambda e: e.importance.value,
+            key=lambda e: _get_importance_value(e.importance),
             reverse=True,
         )
         
