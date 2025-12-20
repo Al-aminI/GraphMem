@@ -577,28 +577,33 @@ class TursoStore:
         return memory
     
     def delete_memory(self, memory_id: str) -> None:
-        """Delete memory from database."""
-        cursor = self.conn.cursor()
-        cursor.execute("DELETE FROM entities WHERE memory_id = ?", (memory_id,))
-        cursor.execute("DELETE FROM relationships WHERE memory_id = ?", (memory_id,))
-        cursor.execute("DELETE FROM clusters WHERE memory_id = ?", (memory_id,))
-        cursor.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
-        self.conn.commit()
+        """Delete memory from database with automatic retry."""
+        def _do_delete():
+            cursor = self.conn.cursor()
+            cursor.execute("DELETE FROM entities WHERE memory_id = ?", (memory_id,))
+            cursor.execute("DELETE FROM relationships WHERE memory_id = ?", (memory_id,))
+            cursor.execute("DELETE FROM clusters WHERE memory_id = ?", (memory_id,))
+            cursor.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
+            self.conn.commit()
+            
+            if self.turso_url and self.sync_mode in ("full", "push"):
+                self._sync_internal()
+            
+            logger.debug(f"Deleted memory {memory_id}")
         
-        if self.turso_url and self.sync_mode in ("full", "push"):
-            self._sync()
-        
-        logger.debug(f"Deleted memory {memory_id}")
+        self._execute_with_retry(_do_delete, "delete_memory")
     
     def clear_memory(self, memory_id: str) -> None:
         """Clear all data in a memory (same as delete)."""
         self.delete_memory(memory_id)
     
     def list_memories(self) -> List[str]:
-        """List all memory IDs."""
-        cursor = self.conn.cursor()
-        cursor.execute("SELECT id FROM memories")
-        return [row[0] for row in cursor.fetchall()]
+        """List all memory IDs with automatic retry."""
+        def _do_list():
+            cursor = self.conn.cursor()
+            cursor.execute("SELECT id FROM memories")
+            return [row[0] for row in cursor.fetchall()]
+        return self._execute_with_retry(_do_list, "list_memories")
     
     def vector_search(
         self,
@@ -622,62 +627,65 @@ class TursoStore:
         Returns:
             List of most similar nodes
         """
-        cursor = self.conn.cursor()
+        def _do_search():
+            cursor = self.conn.cursor()
+            
+            # Try native vector search first
+            if getattr(self, '_native_vector_search', False):
+                try:
+                    # Format query embedding for vector_top_k
+                    query_str = str(list(query_embedding))
+                    
+                    # Native vector search with vector_top_k
+                    # Use subquery to avoid ambiguous column name
+                    results = cursor.execute(f"""
+                        SELECT e.id, e.memory_id, e.user_id, 
+                               e.name, e.entity_type, e.description,
+                               e.importance, e.access_count, e.accessed_at,
+                               e.created_at, e.updated_at, e.metadata
+                        FROM vector_top_k('entities_vector_idx', '{query_str}', {top_k * 3}) AS v
+                        JOIN entities AS e ON e.rowid = v.id
+                        WHERE e.memory_id = ?
+                        AND (e.user_id = ? OR e.user_id IS NULL OR ? IS NULL)
+                        LIMIT ?
+                    """, (memory_id, user_id, user_id, top_k)).fetchall()
+                    
+                    nodes = []
+                    for row in results:
+                        node = MemoryNode(
+                            id=row[0],
+                            name=row[3],
+                            entity_type=row[4],
+                            description=row[5],
+                            importance=row[6] or 0.5,
+                            access_count=row[7] or 0,
+                            accessed_at=datetime.fromisoformat(row[8]) if row[8] else datetime.utcnow(),
+                            created_at=datetime.fromisoformat(row[9]) if row[9] else datetime.utcnow(),
+                            embedding=query_embedding,  # Don't need actual embedding in results
+                            properties=json.loads(row[11]) if row[11] else {},
+                            user_id=row[2],
+                        )
+                        nodes.append(node)
+                    
+                    logger.debug(f"Native vector search returned {len(nodes)} results")
+                    return nodes
+                    
+                except Exception as e:
+                    logger.warning(f"Native vector search failed, falling back to Python: {e}")
+            
+            # Fallback: Python-based cosine similarity
+            return self._vector_search_fallback_internal(memory_id, query_embedding, top_k, user_id)
         
-        # Try native vector search first
-        if getattr(self, '_native_vector_search', False):
-            try:
-                # Format query embedding for vector_top_k
-                query_str = str(list(query_embedding))
-                
-                # Native vector search with vector_top_k
-                # Use subquery to avoid ambiguous column name
-                results = cursor.execute(f"""
-                    SELECT e.id, e.memory_id, e.user_id, 
-                           e.name, e.entity_type, e.description,
-                           e.importance, e.access_count, e.accessed_at,
-                           e.created_at, e.updated_at, e.metadata
-                    FROM vector_top_k('entities_vector_idx', '{query_str}', {top_k * 3}) AS v
-                    JOIN entities AS e ON e.rowid = v.id
-                    WHERE e.memory_id = ?
-                    AND (e.user_id = ? OR e.user_id IS NULL OR ? IS NULL)
-                    LIMIT ?
-                """, (memory_id, user_id, user_id, top_k)).fetchall()
-                
-                nodes = []
-                for row in results:
-                    node = MemoryNode(
-                        id=row[0],
-                        name=row[3],
-                        entity_type=row[4],
-                        description=row[5],
-                        importance=row[6] or 0.5,
-                        access_count=row[7] or 0,
-                        accessed_at=datetime.fromisoformat(row[8]) if row[8] else datetime.utcnow(),
-                        created_at=datetime.fromisoformat(row[9]) if row[9] else datetime.utcnow(),
-                        embedding=query_embedding,  # Don't need actual embedding in results
-                        properties=json.loads(row[11]) if row[11] else {},
-                        user_id=row[2],
-                    )
-                    nodes.append(node)
-                
-                logger.debug(f"Native vector search returned {len(nodes)} results")
-                return nodes
-                
-            except Exception as e:
-                logger.warning(f"Native vector search failed, falling back to Python: {e}")
-        
-        # Fallback: Python-based cosine similarity
-        return self._vector_search_fallback(memory_id, query_embedding, top_k, user_id)
+        return self._execute_with_retry(_do_search, "vector_search")
     
-    def _vector_search_fallback(
+    def _vector_search_fallback_internal(
         self,
         memory_id: str,
         query_embedding: List[float],
         top_k: int,
         user_id: Optional[str],
     ) -> List[MemoryNode]:
-        """Fallback vector search using Python cosine similarity."""
+        """Internal fallback vector search using Python cosine similarity."""
         import math
         
         def cosine_similarity(a: List[float], b: List[float]) -> float:
@@ -772,45 +780,48 @@ class TursoStore:
         Returns:
             List of edges valid at the specified time
         """
-        cursor = self.conn.cursor()
-        query_time_str = query_time.isoformat()
+        def _do_query():
+            cursor = self.conn.cursor()
+            query_time_str = query_time.isoformat()
+            
+            query = """
+                SELECT * FROM relationships
+                WHERE memory_id = ?
+                AND (valid_from IS NULL OR valid_from <= ?)
+                AND (valid_until IS NULL OR valid_until > ?)
+            """
+            params = [memory_id, query_time_str, query_time_str]
+            
+            if relation_type:
+                query += " AND relation_type = ?"
+                params.append(relation_type)
+            
+            if user_id:
+                query += " AND (user_id = ? OR user_id IS NULL)"
+                params.append(user_id)
+            
+            cursor.execute(query, params)
+            
+            edges = []
+            for row in cursor.fetchall():
+                edge = MemoryEdge(
+                    id=row[0],
+                    source_id=row[3],
+                    target_id=row[4],
+                    relation_type=row[5],
+                    description=row[6],
+                    weight=row[7] or 1.0,
+                    confidence=row[8] or 1.0,
+                    valid_from=datetime.fromisoformat(row[9]) if row[9] else None,
+                    valid_until=datetime.fromisoformat(row[10]) if row[10] else None,
+                    created_at=datetime.fromisoformat(row[11]) if row[11] else datetime.utcnow(),
+                    properties=json.loads(row[12]) if row[12] else {},
+                )
+                edges.append(edge)
+            
+            return edges
         
-        query = """
-            SELECT * FROM relationships
-            WHERE memory_id = ?
-            AND (valid_from IS NULL OR valid_from <= ?)
-            AND (valid_until IS NULL OR valid_until > ?)
-        """
-        params = [memory_id, query_time_str, query_time_str]
-        
-        if relation_type:
-            query += " AND relation_type = ?"
-            params.append(relation_type)
-        
-        if user_id:
-            query += " AND (user_id = ? OR user_id IS NULL)"
-            params.append(user_id)
-        
-        cursor.execute(query, params)
-        
-        edges = []
-        for row in cursor.fetchall():
-            edge = MemoryEdge(
-                id=row[0],
-                source_id=row[3],
-                target_id=row[4],
-                relation_type=row[5],
-                description=row[6],
-                weight=row[7] or 1.0,
-                confidence=row[8] or 1.0,
-                valid_from=datetime.fromisoformat(row[9]) if row[9] else None,
-                valid_until=datetime.fromisoformat(row[10]) if row[10] else None,
-                created_at=datetime.fromisoformat(row[11]) if row[11] else datetime.utcnow(),
-                properties=json.loads(row[12]) if row[12] else {},
-            )
-            edges.append(edge)
-        
-        return edges
+        return self._execute_with_retry(_do_query, "query_edges_at_time")
     
     def supersede_relationship(
         self,
@@ -832,20 +843,29 @@ class TursoStore:
         Returns:
             True if successful
         """
-        end_time = end_time or datetime.utcnow()
+        def _do_supersede():
+            effective_time = end_time or datetime.utcnow()
+            
+            cursor = self.conn.cursor()
+            cursor.execute("""
+                UPDATE relationships 
+                SET valid_until = ?, state = 'ARCHIVED'
+                WHERE id = ? AND memory_id = ?
+            """, (effective_time.isoformat(), edge_id, memory_id))
+            
+            self.conn.commit()
+            return cursor.rowcount > 0
         
-        cursor = self.conn.cursor()
-        cursor.execute("""
-            UPDATE relationships 
-            SET valid_until = ?, state = 'ARCHIVED'
-            WHERE id = ? AND memory_id = ?
-        """, (end_time.isoformat(), edge_id, memory_id))
-        
-        self.conn.commit()
-        return cursor.rowcount > 0
+        return self._execute_with_retry(_do_supersede, "supersede_relationship")
     
     def _sync(self) -> None:
-        """Sync with Turso Cloud."""
+        """Sync with Turso Cloud with automatic retry."""
+        def _do_sync():
+            self._sync_internal()
+        self._execute_with_retry(_do_sync, "sync")
+    
+    def _sync_internal(self) -> None:
+        """Internal sync implementation."""
         try:
             if hasattr(self.conn, 'sync'):
                 self.conn.sync()
@@ -879,6 +899,7 @@ class TursoCache:
     - No external server needed
     - Offline support
     - Optional cloud sync
+    - Automatic reconnection on stale streams
     """
     
     def __init__(
@@ -896,31 +917,79 @@ class TursoCache:
             )
         
         self.ttl = ttl
+        self.db_path = db_path
+        self.turso_url = turso_url
+        self.turso_auth_token = turso_auth_token
         
-        if turso_url and turso_auth_token:
-            self.conn = libsql.connect(
-                db_path,
-                sync_url=turso_url,
-                auth_token=turso_auth_token,
-            )
-        else:
-            self.conn = libsql.connect(db_path)
+        # Connection retry settings (infinite with exponential backoff)
+        self._base_retry_delay = 1.0
+        self._max_retry_delay = 30.0
         
+        self._connect()
         self._init_schema()
         logger.info(f"TursoCache initialized: {db_path}")
     
+    def _connect(self) -> None:
+        """Establish connection to Turso database."""
+        if self.turso_url and self.turso_auth_token:
+            self.conn = libsql.connect(
+                self.db_path,
+                sync_url=self.turso_url,
+                auth_token=self.turso_auth_token,
+            )
+        else:
+            self.conn = libsql.connect(self.db_path)
+    
+    def _reconnect(self) -> None:
+        """Reconnect to database after a stale connection error."""
+        logger.warning("TursoCache: Reconnecting due to stale connection...")
+        try:
+            if hasattr(self, 'conn') and self.conn:
+                try:
+                    self.conn.close()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        self._connect()
+        logger.info("TursoCache: Reconnection successful")
+    
+    def _execute_with_retry(self, operation: Callable[[], T], operation_name: str = "operation") -> T:
+        """Execute a database operation with automatic retry on connection errors."""
+        attempt = 0
+        while True:
+            try:
+                return operation()
+            except Exception as e:
+                if _is_stream_error(e):
+                    attempt += 1
+                    delay = min(
+                        self._base_retry_delay * (2 ** (attempt - 1)),
+                        self._max_retry_delay
+                    )
+                    logger.warning(
+                        f"TursoCache: Stream error during {operation_name} "
+                        f"(attempt {attempt}, retrying in {delay:.1f}s): {e}"
+                    )
+                    time.sleep(delay)
+                    self._reconnect()
+                else:
+                    raise
+    
     def _init_schema(self) -> None:
         """Create cache table."""
-        cursor = self.conn.cursor()
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS cache (
-                key TEXT PRIMARY KEY,
-                value TEXT,
-                expires_at TEXT
-            )
-        """)
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_cache_expires ON cache(expires_at)")
-        self.conn.commit()
+        def _do_init():
+            cursor = self.conn.cursor()
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS cache (
+                    key TEXT PRIMARY KEY,
+                    value TEXT,
+                    expires_at TEXT
+                )
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_cache_expires ON cache(expires_at)")
+            self.conn.commit()
+        self._execute_with_retry(_do_init, "init_schema")
     
     def _key(self, *parts: str) -> str:
         """Build a cache key."""
@@ -928,58 +997,68 @@ class TursoCache:
     
     def _cleanup_expired(self) -> None:
         """Remove expired entries."""
-        cursor = self.conn.cursor()
-        now = datetime.utcnow().isoformat()
-        cursor.execute("DELETE FROM cache WHERE expires_at IS NOT NULL AND expires_at < ?", (now,))
-        self.conn.commit()
+        def _do_cleanup():
+            cursor = self.conn.cursor()
+            now = datetime.utcnow().isoformat()
+            cursor.execute("DELETE FROM cache WHERE expires_at IS NOT NULL AND expires_at < ?", (now,))
+            self.conn.commit()
+        self._execute_with_retry(_do_cleanup, "cleanup_expired")
     
     def get(self, *key_parts: str) -> Optional[Any]:
         """Get value from cache."""
-        key = self._key(*key_parts) if len(key_parts) > 1 else key_parts[0]
-        cursor = self.conn.cursor()
-        now = datetime.utcnow().isoformat()
-        
-        cursor.execute("""
-            SELECT value FROM cache 
-            WHERE key = ? AND (expires_at IS NULL OR expires_at > ?)
-        """, (key, now))
-        
-        row = cursor.fetchone()
-        if row:
-            return json.loads(row[0])
-        return None
+        def _do_get():
+            key = self._key(*key_parts) if len(key_parts) > 1 else key_parts[0]
+            cursor = self.conn.cursor()
+            now = datetime.utcnow().isoformat()
+            
+            cursor.execute("""
+                SELECT value FROM cache 
+                WHERE key = ? AND (expires_at IS NULL OR expires_at > ?)
+            """, (key, now))
+            
+            row = cursor.fetchone()
+            if row:
+                return json.loads(row[0])
+            return None
+        return self._execute_with_retry(_do_get, "get")
     
     def set(self, *key_parts: str, value: Any, ttl: Optional[int] = None) -> bool:
         """Set value in cache."""
-        key = self._key(*key_parts)
-        ttl = ttl or self.ttl
-        expires_at = None
-        if ttl:
-            from datetime import timedelta
-            expires_at = (datetime.utcnow() + timedelta(seconds=ttl)).isoformat()
-        
-        cursor = self.conn.cursor()
-        cursor.execute("""
-            INSERT OR REPLACE INTO cache (key, value, expires_at)
-            VALUES (?, ?, ?)
-        """, (key, json.dumps(value), expires_at))
-        self.conn.commit()
-        return True
+        def _do_set():
+            key = self._key(*key_parts)
+            ttl_val = ttl or self.ttl
+            expires_at = None
+            if ttl_val:
+                from datetime import timedelta
+                expires_at = (datetime.utcnow() + timedelta(seconds=ttl_val)).isoformat()
+            
+            cursor = self.conn.cursor()
+            cursor.execute("""
+                INSERT OR REPLACE INTO cache (key, value, expires_at)
+                VALUES (?, ?, ?)
+            """, (key, json.dumps(value), expires_at))
+            self.conn.commit()
+            return True
+        return self._execute_with_retry(_do_set, "set")
     
     def delete(self, key: str) -> None:
         """Delete value from cache."""
-        cursor = self.conn.cursor()
-        cursor.execute("DELETE FROM cache WHERE key = ?", (key,))
-        self.conn.commit()
+        def _do_delete():
+            cursor = self.conn.cursor()
+            cursor.execute("DELETE FROM cache WHERE key = ?", (key,))
+            self.conn.commit()
+        self._execute_with_retry(_do_delete, "delete")
     
     def invalidate(self, memory_id: str, user_id: str = "default") -> None:
         """Invalidate all cache entries for a user's memory."""
-        cursor = self.conn.cursor()
-        pattern = f"%{user_id}%{memory_id}%"
-        cursor.execute("DELETE FROM cache WHERE key LIKE ?", (pattern,))
-        deleted = cursor.rowcount
-        self.conn.commit()
-        logger.debug(f"Invalidated {deleted} Turso cache entries")
+        def _do_invalidate():
+            cursor = self.conn.cursor()
+            pattern = f"%{user_id}%{memory_id}%"
+            cursor.execute("DELETE FROM cache WHERE key LIKE ?", (pattern,))
+            deleted = cursor.rowcount
+            self.conn.commit()
+            logger.debug(f"Invalidated {deleted} Turso cache entries")
+        self._execute_with_retry(_do_invalidate, "invalidate")
     
     # Specialized cache methods matching InMemoryCache interface
     
