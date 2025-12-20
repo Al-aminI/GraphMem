@@ -14,13 +14,30 @@ Benefits over InMemoryStore:
 from __future__ import annotations
 import logging
 import json
+import time
 from datetime import datetime
+from functools import wraps
 from pathlib import Path
-from typing import Dict, Optional, List, Any
+from typing import Dict, Optional, List, Any, Callable, TypeVar
 
 from graphmem.core.memory_types import Memory, MemoryNode, MemoryEdge, MemoryCluster, MemoryImportance
 
 logger = logging.getLogger(__name__)
+
+T = TypeVar('T')
+
+
+def _is_stream_error(error: Exception) -> bool:
+    """Check if the error is a stale stream/connection error from Turso."""
+    error_str = str(error).lower()
+    return any(msg in error_str for msg in [
+        "stream not found",
+        "connection closed",
+        "connection reset",
+        "websocket",
+        "hrana",
+        "peer closed connection",
+    ])
 
 # Try to import libsql
 try:
@@ -78,22 +95,93 @@ class TursoStore:
         self.sync_mode = sync_mode
         self.embedding_dimensions = embedding_dimensions
         
+        # Connection retry settings (infinite with exponential backoff)
+        self._base_retry_delay = 1.0  # Initial delay in seconds
+        self._max_retry_delay = 30.0  # Cap backoff at 30 seconds
+        
         # Connect to database
-        if turso_url and turso_auth_token:
-            # Cloud-synced mode
-            self.conn = libsql.connect(
-                db_path,
-                sync_url=turso_url,
-                auth_token=turso_auth_token,
-            )
-            logger.info(f"TursoStore connected with cloud sync: {turso_url}")
-        else:
-            # Local-only mode
-            self.conn = libsql.connect(db_path)
-            logger.info(f"TursoStore connected (local): {db_path}")
+        self._connect()
         
         # Initialize schema
         self._init_schema()
+    
+    def _connect(self) -> None:
+        """Establish connection to Turso database."""
+        if self.turso_url and self.turso_auth_token:
+            # Cloud-synced mode
+            self.conn = libsql.connect(
+                self.db_path,
+                sync_url=self.turso_url,
+                auth_token=self.turso_auth_token,
+            )
+            logger.info(f"TursoStore connected with cloud sync: {self.turso_url}")
+        else:
+            # Local-only mode
+            self.conn = libsql.connect(self.db_path)
+            logger.info(f"TursoStore connected (local): {self.db_path}")
+    
+    def _reconnect(self) -> None:
+        """Reconnect to database after a stale connection error."""
+        logger.warning("TursoStore: Reconnecting due to stale connection...")
+        try:
+            # Try to close old connection gracefully
+            if hasattr(self, 'conn') and self.conn:
+                try:
+                    self.conn.close()
+                except Exception:
+                    pass  # Ignore errors closing stale connection
+        except Exception:
+            pass
+        
+        # Establish new connection
+        self._connect()
+        logger.info("TursoStore: Reconnection successful")
+    
+    def _execute_with_retry(self, operation: Callable[[], T], operation_name: str = "operation") -> T:
+        """
+        Execute a database operation with automatic retry on connection errors.
+        
+        Uses infinite retry with exponential backoff for transient connection issues.
+        This ensures long-running ingestion jobs don't fail due to temporary network hiccups.
+        
+        Args:
+            operation: Callable that performs the database operation
+            operation_name: Name of operation for logging
+            
+        Returns:
+            Result of the operation
+            
+        Raises:
+            Non-connection errors immediately (don't retry logic/data errors)
+        """
+        attempt = 0
+        
+        while True:
+            try:
+                return operation()
+            except Exception as e:
+                if _is_stream_error(e):
+                    attempt += 1
+                    
+                    # Calculate delay with exponential backoff, capped at max
+                    delay = min(
+                        self._base_retry_delay * (2 ** (attempt - 1)),
+                        self._max_retry_delay
+                    )
+                    
+                    logger.warning(
+                        f"TursoStore: Stream error during {operation_name} "
+                        f"(attempt {attempt}, retrying in {delay:.1f}s): {e}"
+                    )
+                    
+                    # Wait before retry
+                    time.sleep(delay)
+                    
+                    # Reconnect
+                    self._reconnect()
+                else:
+                    # Not a connection error - don't retry, raise immediately
+                    raise
     
     def _init_schema(self) -> None:
         """Create database tables if they don't exist."""
@@ -195,7 +283,14 @@ class TursoStore:
         logger.debug("TursoStore schema initialized")
     
     def save_memory(self, memory: Memory) -> None:
-        """Save memory to Turso database."""
+        """Save memory to Turso database with automatic retry on connection errors."""
+        def _do_save():
+            self._save_memory_internal(memory)
+        
+        self._execute_with_retry(_do_save, "save_memory")
+    
+    def _save_memory_internal(self, memory: Memory) -> None:
+        """Internal save implementation."""
         cursor = self.conn.cursor()
         now = datetime.utcnow().isoformat()
         
@@ -347,12 +442,19 @@ class TursoStore:
     
     def load_memory(self, memory_id: str, user_id: str = None) -> Optional[Memory]:
         """
-        Load memory from Turso database.
+        Load memory from Turso database with automatic retry on connection errors.
         
         Args:
             memory_id: Memory ID to load
             user_id: User ID for multi-tenant isolation
         """
+        def _do_load():
+            return self._load_memory_internal(memory_id, user_id)
+        
+        return self._execute_with_retry(_do_load, "load_memory")
+    
+    def _load_memory_internal(self, memory_id: str, user_id: str = None) -> Optional[Memory]:
+        """Internal load implementation."""
         # Sync from cloud first if configured
         if self.turso_url and self.sync_mode in ("full", "pull"):
             self._sync()
