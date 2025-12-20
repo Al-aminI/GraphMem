@@ -71,7 +71,7 @@ class TursoStore:
         db_path: str = "graphmem.db",
         turso_url: Optional[str] = None,
         turso_auth_token: Optional[str] = None,
-        sync_mode: str = "full",  # "full", "push", "pull", or None
+        sync_mode: str = "on_close",  # "full", "push", "pull", "on_close", or None
         embedding_dimensions: int = 1536,  # OpenAI text-embedding-3-small default
     ):
         """
@@ -81,7 +81,7 @@ class TursoStore:
             db_path: Local SQLite file path
             turso_url: Optional Turso Cloud URL for sync
             turso_auth_token: Auth token for Turso Cloud
-            sync_mode: Sync mode - "full" (bidirectional), "push", "pull", or None
+            sync_mode: Sync mode - "on_close" (default, sync when closing), "full", "push", "pull", or None
         """
         if not TURSO_AVAILABLE:
             raise ImportError(
@@ -106,23 +106,25 @@ class TursoStore:
         self._init_schema()
     
     def _connect(self) -> None:
-        """Establish connection to Turso database."""
+        """
+        Establish connection to Turso database.
+        
+        Architecture: LOCAL-FIRST
+        - All queries execute against the local SQLite file (fast, no network)
+        - Cloud sync happens separately via sync() call
+        - This avoids websocket timeout issues during long operations
+        """
+        # Always connect to local file first for fast operations
+        self.conn = libsql.connect(self.db_path)
+        
         if self.turso_url and self.turso_auth_token:
-            # Cloud-synced mode
-            self.conn = libsql.connect(
-                self.db_path,
-                sync_url=self.turso_url,
-                auth_token=self.turso_auth_token,
-            )
-            logger.info(f"TursoStore connected with cloud sync: {self.turso_url}")
+            logger.info(f"TursoStore connected (local: {self.db_path}, cloud sync available)")
         else:
-            # Local-only mode
-            self.conn = libsql.connect(self.db_path)
-            logger.info(f"TursoStore connected (local): {self.db_path}")
+            logger.info(f"TursoStore connected (local-only): {self.db_path}")
     
     def _reconnect(self) -> None:
         """Reconnect to database after a stale connection error."""
-        logger.warning("TursoStore: Reconnecting due to stale connection...")
+        logger.debug("TursoStore: Reconnecting...")
         try:
             # Try to close old connection gracefully
             if hasattr(self, 'conn') and self.conn:
@@ -135,7 +137,7 @@ class TursoStore:
         
         # Establish new connection
         self._connect()
-        logger.info("TursoStore: Reconnection successful")
+        logger.debug("TursoStore: Reconnected")
     
     def _execute_with_retry(self, operation: Callable[[], T], operation_name: str = "operation") -> T:
         """
@@ -169,10 +171,17 @@ class TursoStore:
                         self._max_retry_delay
                     )
                     
-                    logger.warning(
-                        f"TursoStore: Stream error during {operation_name} "
-                        f"(attempt {attempt}, retrying in {delay:.1f}s): {e}"
-                    )
+                    # Only log debug for first few retries, warn after 3+ consecutive failures
+                    if attempt <= 3:
+                        logger.debug(
+                            f"TursoStore: Stream reconnect during {operation_name} "
+                            f"(attempt {attempt})"
+                        )
+                    else:
+                        logger.warning(
+                            f"TursoStore: Persistent stream errors during {operation_name} "
+                            f"(attempt {attempt}, retrying in {delay:.1f}s)"
+                        )
                     
                     # Wait before retry
                     time.sleep(delay)
@@ -859,23 +868,36 @@ class TursoStore:
         return self._execute_with_retry(_do_supersede, "supersede_relationship")
     
     def _sync(self) -> None:
-        """Sync with Turso Cloud with automatic retry."""
-        def _do_sync():
-            self._sync_internal()
-        self._execute_with_retry(_do_sync, "sync")
-    
-    def _sync_internal(self) -> None:
-        """Internal sync implementation."""
+        """
+        Sync local database to Turso Cloud.
+        
+        Creates a temporary cloud connection to push local changes.
+        This is a separate operation from normal queries to avoid websocket timeout issues.
+        """
+        if not self.turso_url or not self.turso_auth_token:
+            logger.debug("No cloud credentials, skipping sync")
+            return
+        
         try:
-            if hasattr(self.conn, 'sync'):
-                self.conn.sync()
-                logger.debug("Synced with Turso Cloud")
+            # Create temporary cloud-connected replica for sync
+            cloud_conn = libsql.connect(
+                self.db_path,
+                sync_url=self.turso_url,
+                auth_token=self.turso_auth_token,
+            )
+            
+            # Sync local changes to cloud
+            if hasattr(cloud_conn, 'sync'):
+                cloud_conn.sync()
+                logger.debug("Synced local changes to Turso Cloud")
+            
+            cloud_conn.close()
         except Exception as e:
-            logger.warning(f"Turso sync failed: {e}")
+            logger.warning(f"Turso cloud sync failed (will retry later): {e}")
     
     def close(self) -> None:
-        """Close the database connection."""
-        if self.turso_url and self.sync_mode in ("full", "push"):
+        """Close the database connection and sync to cloud if configured."""
+        if self.turso_url and self.sync_mode in ("full", "push", "on_close"):
             self._sync()
         self.conn.close()
         logger.info("TursoStore connection closed")
@@ -930,19 +952,19 @@ class TursoCache:
         logger.info(f"TursoCache initialized: {db_path}")
     
     def _connect(self) -> None:
-        """Establish connection to Turso database."""
-        if self.turso_url and self.turso_auth_token:
-            self.conn = libsql.connect(
-                self.db_path,
-                sync_url=self.turso_url,
-                auth_token=self.turso_auth_token,
-            )
-        else:
-            self.conn = libsql.connect(self.db_path)
+        """
+        Establish connection to cache database.
+        
+        Architecture: LOCAL-FIRST
+        - Cache operations always use local SQLite (fast, no network)
+        - Cloud sync is optional and separate
+        """
+        # Always use local connection for fast cache operations
+        self.conn = libsql.connect(self.db_path)
     
     def _reconnect(self) -> None:
         """Reconnect to database after a stale connection error."""
-        logger.warning("TursoCache: Reconnecting due to stale connection...")
+        logger.debug("TursoCache: Reconnecting...")
         try:
             if hasattr(self, 'conn') and self.conn:
                 try:
@@ -952,7 +974,7 @@ class TursoCache:
         except Exception:
             pass
         self._connect()
-        logger.info("TursoCache: Reconnection successful")
+        logger.debug("TursoCache: Reconnected")
     
     def _execute_with_retry(self, operation: Callable[[], T], operation_name: str = "operation") -> T:
         """Execute a database operation with automatic retry on connection errors."""
@@ -967,10 +989,11 @@ class TursoCache:
                         self._base_retry_delay * (2 ** (attempt - 1)),
                         self._max_retry_delay
                     )
-                    logger.warning(
-                        f"TursoCache: Stream error during {operation_name} "
-                        f"(attempt {attempt}, retrying in {delay:.1f}s): {e}"
-                    )
+                    # Only log debug for first few retries, warn after 3+ consecutive failures
+                    if attempt <= 3:
+                        logger.debug(f"TursoCache: Stream reconnect during {operation_name} (attempt {attempt})")
+                    else:
+                        logger.warning(f"TursoCache: Persistent stream errors during {operation_name} (attempt {attempt})")
                     time.sleep(delay)
                     self._reconnect()
                 else:
