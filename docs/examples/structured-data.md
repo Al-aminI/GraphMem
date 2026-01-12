@@ -88,7 +88,7 @@ works_at = MemoryEdge(
 memory._memory.add_edge(works_at)
 
 # Save to persistent storage
-memory._save_memory()
+memory.save()
 
 # Now query normally!
 response = memory.query("Who works at Acme Corporation?")
@@ -379,7 +379,7 @@ def import_crm_data(memory: GraphMem, crm_data: dict):
             memory._memory.add_edge(edge)
     
     # Save all to storage
-    memory._save_memory()
+    memory.save()
     
     print(f"Imported {len(crm_data['companies'])} companies, {len(crm_data['contacts'])} contacts")
 
@@ -412,7 +412,7 @@ def import_from_csv(memory: GraphMem, csv_path: str, entity_type: str):
             )
             memory._memory.add_node(node)
     
-    memory._save_memory()
+    memory.save()
 ```
 
 ---
@@ -451,7 +451,7 @@ company = MemoryNode(
 )
 memory._memory.add_node(company)
 
-memory._save_memory()
+memory.save()
 
 # 2. Then ingest natural language that references these entities
 # GraphMem will automatically link to existing entities via alias matching!
@@ -480,11 +480,11 @@ def add_entity_with_embedding(memory: GraphMem, node: MemoryNode):
     # Generate embedding from name + description
     text_to_embed = f"{node.name}: {node.description}"
     
-    embedding = memory._embedding_provider.embed(text_to_embed)
+    embedding = memory._embeddings.embed_text(text_to_embed)
     node.embedding = embedding
     
     memory._memory.add_node(node)
-    memory._save_memory()
+    memory.save()
 
 # Usage
 person = MemoryNode(
@@ -556,7 +556,7 @@ MemoryImportance.LOW       # Less important, may decay
 MemoryImportance.EPHEMERAL # Temporary, will decay quickly
 ```
 
-### 5. Always Call `_save_memory()` After Bulk Operations
+### 5. Always Call `save()` After Bulk Operations
 
 ```python
 # ✅ Good: Single save after all additions
@@ -564,12 +564,12 @@ for entity in entities:
     memory._memory.add_node(entity)
 for relation in relations:
     memory._memory.add_edge(relation)
-memory._save_memory()  # One save at the end
+memory.save()  # One save at the end
 
 # ❌ Bad: Save after each addition (slow)
 for entity in entities:
     memory._memory.add_node(entity)
-    memory._save_memory()  # Slow!
+    memory.save()  # Slow!
 ```
 
 ---

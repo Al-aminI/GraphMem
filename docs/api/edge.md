@@ -73,7 +73,7 @@ memory._ensure_initialized()
 
 # Add custom relationship
 memory._memory.add_edge(edge)
-memory._save_memory()
+memory.save()
 
 # Now you can query it!
 response = memory.query("Who is the CEO of Tesla?")

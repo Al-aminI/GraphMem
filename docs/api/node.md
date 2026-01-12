@@ -77,7 +77,7 @@ memory._ensure_initialized()
 
 # Add custom entity
 memory._memory.add_node(node)
-memory._save_memory()
+memory.save()
 
 # Now you can query it!
 response = memory.query("Who is the CEO of Tesla?")
