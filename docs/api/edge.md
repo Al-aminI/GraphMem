@@ -2,6 +2,10 @@
 
 Represents a relationship in the knowledge graph.
 
+!!! tip "Structured Data Import"
+    You can directly create relationships like "person works at organization" without LLM extraction.
+    See the [Structured Data Guide](../examples/structured-data.md) for complete examples.
+
 ## Definition
 
 ```python
@@ -41,7 +45,7 @@ class MemoryEdge:
 ## Example
 
 ```python
-from graphmem.core.memory_types import MemoryEdge
+from graphmem.core.memory_types import MemoryEdge, MemoryImportance
 from datetime import datetime
 
 edge = MemoryEdge(
@@ -52,9 +56,27 @@ edge = MemoryEdge(
     description="Elon Musk is CEO of Tesla",
     valid_from=datetime(2008, 10, 1),
     valid_until=None,  # Still current
+    importance=MemoryImportance.CRITICAL,
     user_id="alice",
     memory_id="chat",
 )
+```
+
+## Adding to GraphMem
+
+```python
+from graphmem import GraphMem, MemoryConfig
+
+# Initialize
+memory = GraphMem(config, memory_id="my_agent", user_id="default")
+memory._ensure_initialized()
+
+# Add custom relationship
+memory._memory.add_edge(edge)
+memory._save_memory()
+
+# Now you can query it!
+response = memory.query("Who is the CEO of Tesla?")
 ```
 
 ## Methods

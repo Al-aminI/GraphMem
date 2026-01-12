@@ -2,6 +2,10 @@
 
 Represents an entity in the knowledge graph.
 
+!!! tip "Structured Data Import"
+    You can directly create and add custom entities without LLM extraction.
+    See the [Structured Data Guide](../examples/structured-data.md) for complete examples.
+
 ## Definition
 
 ```python
@@ -43,7 +47,7 @@ class MemoryNode:
 ## Example
 
 ```python
-from graphmem.core.memory_types import MemoryNode
+from graphmem.core.memory_types import MemoryNode, MemoryImportance
 from datetime import datetime
 
 node = MemoryNode(
@@ -51,8 +55,8 @@ node = MemoryNode(
     name="Elon Musk",
     entity_type="Person",
     description="CEO of Tesla and SpaceX",
-    importance=1.0,
-    aliases=["Musk", "Elon"],
+    importance=MemoryImportance.CRITICAL,  # Key person, never decays
+    aliases={"Musk", "Elon", "E. Musk"},   # Set for alias matching
     properties={
         "title": "CEO",
         "companies": ["Tesla", "SpaceX", "Neuralink"],
@@ -60,6 +64,23 @@ node = MemoryNode(
     user_id="alice",
     memory_id="chat",
 )
+```
+
+## Adding to GraphMem
+
+```python
+from graphmem import GraphMem, MemoryConfig
+
+# Initialize
+memory = GraphMem(config, memory_id="my_agent", user_id="default")
+memory._ensure_initialized()
+
+# Add custom entity
+memory._memory.add_node(node)
+memory._save_memory()
+
+# Now you can query it!
+response = memory.query("Who is the CEO of Tesla?")
 ```
 
 ## Methods

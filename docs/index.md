@@ -189,6 +189,14 @@ GraphMem implements the **four pillars of human memory**:
 
     [:octicons-arrow-right-24: Learn more](concepts/multi-tenancy.md)
 
+-   :material-database-import:{ .lg .middle } **Structured Data Import**
+
+    ---
+
+    Pass custom entities (Person, Org, Quote) and known relationships directly
+
+    [:octicons-arrow-right-24: Learn more](examples/structured-data.md)
+
 </div>
 
 ---

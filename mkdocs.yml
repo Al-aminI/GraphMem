@@ -200,6 +200,7 @@ nav:
   
   - Examples:
     - Basic Usage: examples/basic.md
+    - Structured Data: examples/structured-data.md
     - Multi-Tenant Chat: examples/chat.md
     - Knowledge Base: examples/kb.md
     - Temporal Queries: examples/temporal.md
