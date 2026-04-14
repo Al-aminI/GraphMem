@@ -188,8 +188,13 @@ class MemoryConfig:
     
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "MemoryConfig":
-        """Create configuration from dictionary."""
-        return cls(**{k: v for k, v in data.items() if hasattr(cls, k)})
+        """Create configuration from dictionary.
+
+        Unknown keys are ignored so callers can pass a superset dict safely.
+        """
+        import dataclasses
+        valid_fields = {f.name for f in dataclasses.fields(cls)}
+        return cls(**{k: v for k, v in data.items() if k in valid_fields})
 
 
 class GraphMem:
